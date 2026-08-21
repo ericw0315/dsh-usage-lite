@@ -15,6 +15,10 @@ assert.equal(manifest.homepage, "https://github.com/ericw0315/dsh-usage-lite#rea
 assert.equal(manifest.bugs?.url, "https://github.com/ericw0315/dsh-usage-lite/issues");
 assert.ok(manifest.files?.includes("LICENSE"));
 await access(join(root, "LICENSE"));
+assert.ok(manifest.files?.includes("docs/images/usage-lite-preview.jpg"));
+await access(join(root, "docs", "images", "usage-lite-preview.jpg"));
+assert.equal(manifest.publishConfig?.access, "public");
+assert.equal(manifest.scripts?.prepublishOnly, "npm run check && npm test");
 
 const patchPath = join(root, normalize(patchDeclaration));
 await access(patchPath);

@@ -18,10 +18,14 @@
     "provider-balance"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "lib/index.js",
   "files": [
     "lib/",
+    "docs/images/usage-lite-preview.jpg",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
@@ -46,7 +50,8 @@
   },
   "scripts": {
     "check": "node --check lib/index.js && node --check lib/client.js && node --check scripts/test-bundle.mjs && node --check scripts/test-server.mjs && node --check scripts/smoke-client.mjs",
-    "test": "node scripts/test-bundle.mjs && node scripts/test-server.mjs && node scripts/smoke-client.mjs"
+    "test": "node scripts/test-bundle.mjs && node scripts/test-server.mjs && node scripts/smoke-client.mjs",
+    "prepublishOnly": "npm run check && npm test"
   },
   "devDependencies": {
     "react": "^18.2.0",

@@ -8,6 +8,10 @@
 
 Compact provider balances and local token-usage analytics for the DeepSeek Harness Web UI.
 
+![dsh-usage-lite balance and usage overview](docs/images/usage-lite-preview.jpg)
+
+> 界面示意图：直观展示折叠态余额、供应商账户与聚合用量；具体文字和数据以实际运行环境为准。
+
 ## 为什么选择 Lite
 
 `dsh-usage-lite` 只保留高频信息和必要操作：侧边栏快速查看余额，展开后查看供应商账户与近半年用量。没有独立后台、复杂配置页或遥测服务。
@@ -42,7 +46,7 @@ Compact provider balances and local token-usage analytics for the DeepSeek Harne
 需要已安装并能够运行 `dsh web` 的 DeepSeek Harness 环境。
 
 ```bash
-dsh plugin --profile web add "github:ericw0315/dsh-usage-lite"
+dsh plugin --profile web add dsh-usage-lite
 ```
 
 安装后重启正在运行的 `dsh web`，并在浏览器中硬刷新。入口会出现在侧边栏设置项上方。
