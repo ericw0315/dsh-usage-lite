@@ -12,8 +12,13 @@ const Stub = ({ children }) => children ?? null;
 const primitives = new Proxy({}, { get: () => Stub });
 
 let captured = null;
+let injectedStyleText = "";
 globalThis.window = { __ModuleLoader__: { load: (entry) => { captured = entry; } } };
-globalThis.document = { querySelector: () => null, createElement: () => ({ dataset: {}, appendChild: () => {} }), head: { appendChild: () => {} } };
+globalThis.document = {
+  querySelector: () => null,
+  createElement: () => ({ dataset: {}, textContent: "", appendChild: () => {} }),
+  head: { appendChild: (node) => { injectedStyleText = node.textContent; } }
+};
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, "lib", "client.js"), "utf8");
@@ -193,6 +198,14 @@ if (!billingMarkup.includes("deepseek-chat") || !billingMarkup.includes("By prov
 if (!billingMarkup.includes("Costs are estimates")) throw new Error("billing view must disclose estimated costs");
 if (!billingMarkup.includes("dul_heatmap") || !billingMarkup.includes("Mon") || !billingMarkup.includes("2026-08-21")) throw new Error("billing view must render a compact usage heatmap");
 if (!source.includes("grid-template-columns:repeat(27,minmax(0,1fr))")) throw new Error("heatmap weeks must fill the available row width");
+const viewportRule = /\.dul_heatmapViewport\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const selectedRule = /\.dul_heatmapDay\[data-selected=true\]\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const selectedRing = Math.max(0, ...Array.from(selectedRule.matchAll(/0 0 0 (\d+)px/g), (match) => Number(match[1])));
+const viewportPadding = Number(/(?:^|;)padding:(\d+)px(?:;|$)/.exec(viewportRule)?.[1] ?? 0);
+const viewportMargin = Number(/(?:^|;)margin:-(\d+)px(?:;|$)/.exec(viewportRule)?.[1] ?? 0);
+if (selectedRing === 0 || viewportPadding < selectedRing || viewportMargin < selectedRing) {
+  throw new Error("heatmap viewport must reserve and offset enough room for the selected-day ring");
+}
 
 const emptyBreakdownMarkup = renderToStaticMarkup(react.createElement(exports_.BillingView, {
   billing: { total: { tokens: 0, cost: 0 }, providers: [], days: [] },
