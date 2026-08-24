@@ -12,8 +12,13 @@ const Stub = ({ children }) => children ?? null;
 const primitives = new Proxy({}, { get: () => Stub });
 
 let captured = null;
+let injectedStyleText = "";
 globalThis.window = { __ModuleLoader__: { load: (entry) => { captured = entry; } } };
-globalThis.document = { querySelector: () => null, createElement: () => ({ dataset: {}, appendChild: () => {} }), head: { appendChild: () => {} } };
+globalThis.document = {
+  querySelector: () => null,
+  createElement: () => ({ dataset: {}, textContent: "", appendChild: () => {} }),
+  head: { appendChild: (node) => { injectedStyleText = node.textContent; } }
+};
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const source = readFileSync(join(root, "lib", "client.js"), "utf8");
@@ -181,8 +186,8 @@ const billingMarkup = renderToStaticMarkup(react.createElement(exports_.BillingV
     providers: [{
       id: "deepseek",
       tokens: 1234567,
-      cost: 18.5,
-      models: [{ id: "deepseek-chat", tokens: 1234567, cost: 18.5 }]
+      cost: 7.25,
+      models: [{ id: "deepseek-chat", tokens: 1234567, cost: 1.5 }]
     }],
     days: [{ date: "2026-08-21", tokens: 34567, cost: 1.25 }]
   },
@@ -190,9 +195,30 @@ const billingMarkup = renderToStaticMarkup(react.createElement(exports_.BillingV
 }));
 if (!billingMarkup.includes("1,234,567") || !billingMarkup.includes("2026-08-21")) throw new Error("billing view must show totals and daily rows");
 if (!billingMarkup.includes("deepseek-chat") || !billingMarkup.includes("By provider and model")) throw new Error("billing view must show provider and model breakdown");
+const providerUsageHeadStart = billingMarkup.indexOf('<div class="dul_providerUsageHead">');
+const providerUsageHeadEnd = billingMarkup.indexOf("</div>", providerUsageHeadStart);
+const providerUsageHeadMarkup = billingMarkup.slice(providerUsageHeadStart, providerUsageHeadEnd);
+if (!providerUsageHeadMarkup.includes("7.25")) throw new Error("provider summary must show its total cost");
+const providerUsageHeadRule = /\.dul_providerUsageHead\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const modelRowRule = /\.dul_modelRow\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const providerColumns = /grid-template-columns:([^;]+)/.exec(providerUsageHeadRule)?.[1] ?? "";
+const modelColumns = /grid-template-columns:([^;]+)/.exec(modelRowRule)?.[1] ?? "";
+const providerTotalRule = /\.dul_providerUsageTotal\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const modelValueRule = /\.dul_modelValue\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+if (providerColumns === "" || providerColumns !== modelColumns) throw new Error("provider and model rows must share the same three-column layout");
+if (!providerTotalRule.includes("text-align:right") || !modelValueRule.includes("text-align:right")) throw new Error("usage values must align to the right edge of their columns");
+if (injectedStyleText.includes(".dul_modelValue:last-child{grid-column:2}")) throw new Error("responsive layout must keep model cost in the third column");
 if (!billingMarkup.includes("Costs are estimates")) throw new Error("billing view must disclose estimated costs");
 if (!billingMarkup.includes("dul_heatmap") || !billingMarkup.includes("Mon") || !billingMarkup.includes("2026-08-21")) throw new Error("billing view must render a compact usage heatmap");
 if (!source.includes("grid-template-columns:repeat(27,minmax(0,1fr))")) throw new Error("heatmap weeks must fill the available row width");
+const viewportRule = /\.dul_heatmapViewport\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const selectedRule = /\.dul_heatmapDay\[data-selected=true\]\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
+const selectedRing = Math.max(0, ...Array.from(selectedRule.matchAll(/0 0 0 (\d+)px/g), (match) => Number(match[1])));
+const viewportPadding = Number(/(?:^|;)padding:(\d+)px(?:;|$)/.exec(viewportRule)?.[1] ?? 0);
+const viewportMargin = Number(/(?:^|;)margin:-(\d+)px(?:;|$)/.exec(viewportRule)?.[1] ?? 0);
+if (selectedRing === 0 || viewportPadding < selectedRing || viewportMargin < selectedRing) {
+  throw new Error("heatmap viewport must reserve and offset enough room for the selected-day ring");
+}
 
 const emptyBreakdownMarkup = renderToStaticMarkup(react.createElement(exports_.BillingView, {
   billing: { total: { tokens: 0, cost: 0 }, providers: [], days: [] },
