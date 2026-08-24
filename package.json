@@ -1,7 +1,7 @@
 {
   "name": "dsh-usage-lite",
   "description": "Compact provider balances and local token-usage analytics for dsh web",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ericw0315/dsh-usage-lite.git"
