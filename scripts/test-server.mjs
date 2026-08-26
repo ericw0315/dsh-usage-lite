@@ -496,6 +496,91 @@ async function testDetailDegradesGracefullyWhenBalanceFails() {
   assert.equal(body.provider.error, "upstream-error");
 }
 
+async function testAmbiguousConfiguredProvidersDegradeSafely() {
+  const plugin = await freshModule("ambiguous-configured-providers");
+  const routes = new Map();
+  let balanceRequests = 0;
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const settings = {
+    get: (name) => {
+      if (name === "llm-deepseek") {
+        return { apiKeyEnv: "DEEPSEEK_API_KEY", baseURL: "https://api.anthropic.com" };
+      }
+      if (name === "llm-pi-ai") {
+        return {
+          providers: {
+            openai: {
+              displayName: "Ambiguous OpenAI",
+              apiKeyEnv: "OPENAI_API_KEY",
+              baseURL: "https://api.anthropic.com"
+            }
+          }
+        };
+      }
+      return void 0;
+    }
+  };
+  await plugin.apply(makeContext({
+    sessions: {
+      list: () => [{
+        id: "ambiguous-provider",
+        events: [usageEvent({
+          seq: 1,
+          time: at,
+          provider: "openai",
+          model: "openai/gpt-5.6-luna",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] },
+    routes,
+    settings,
+    fetchImpl: async () => {
+      balanceRequests += 1;
+      throw new Error("ambiguous accounts must not issue balance requests");
+    }
+  }));
+
+  const summary = makeResponse();
+  await routes.get(plugin.SUMMARY_PATH)({
+    method: "GET",
+    url: plugin.SUMMARY_PATH,
+    headers: { host: "localhost:3080" },
+    socket: { remoteAddress: "127.0.0.1" }
+  }, summary);
+  const summaryBody = JSON.parse(summary.body);
+  assert.equal(summary.status, 200, "ambiguous primary account must not reject the summary route");
+  assert.deepEqual(summaryBody.provider, {
+    id: "deepseek-official",
+    displayName: "DeepSeek",
+    supported: false,
+    configured: true,
+    balance: null,
+    error: "ambiguous-adapter"
+  });
+
+  const detail = makeResponse();
+  await routes.get(plugin.DETAIL_PATH)({
+    method: "GET",
+    url: plugin.DETAIL_PATH,
+    headers: { host: "localhost:3080" },
+    socket: { remoteAddress: "127.0.0.1" }
+  }, detail);
+  const detailBody = JSON.parse(detail.body);
+  assert.equal(detail.status, 200, "ambiguous configured accounts must not reject the detail route");
+  assert.deepEqual(detailBody.providers.map((provider) => [provider.id, provider.error]), [
+    ["deepseek-official", "ambiguous-adapter"],
+    ["openai", "ambiguous-adapter"]
+  ]);
+  assert.deepEqual(detailBody.billing.providers[0].costs, []);
+  assert.equal(detailBody.billing.providers[0].unpricedTokens, 2_000_000);
+  assert.equal(balanceRequests, 0);
+  assert.equal(detail.body.includes("apiKeyEnv"), false);
+  assert.equal(detail.body.includes("baseURL"), false);
+}
+
 const root = await mkdtemp(join(tmpdir(), "dsh-usage-lite-"));
 const originalFetch = globalThis.fetch;
 try {
@@ -507,6 +592,7 @@ try {
   await testModelPrefixPricingFallback();
   await testDetailAggregation();
   await testDetailDegradesGracefullyWhenBalanceFails();
+  await testAmbiguousConfiguredProvidersDegradeSafely();
   console.log("server ok");
 } finally {
   globalThis.fetch = originalFetch;

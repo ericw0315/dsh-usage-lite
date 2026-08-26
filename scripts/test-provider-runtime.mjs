@@ -26,6 +26,18 @@ assert.equal(matchProvider([base], { id: "sample" }), base);
 assert.equal(matchProvider([base], { id: "other" }), null);
 assert.throws(() => matchProvider([base, { ...base, id: "second" }], { id: "sample" }), /ambiguous-adapter/);
 assert.deepEqual(normalizeProvider([base], { id: "sample" }), { adapter: base, provider: { id: "sample", adapterId: "sample" } });
+const ambiguousResolution = normalizeProvider([base, { ...base, id: "second" }], { id: "sample" });
+assert.notEqual(ambiguousResolution.adapter, null, "ambiguous resolution must remain distinct from an unmatched provider");
+assert.deepEqual(ambiguousResolution.provider, { id: "sample" });
+assert.deepEqual(await fetchProviderBalance(ambiguousResolution.adapter, ambiguousResolution.provider), {
+  id: "sample",
+  displayName: void 0,
+  adapterId: void 0,
+  supported: false,
+  configured: true,
+  balance: null,
+  error: "ambiguous-adapter"
+});
 assert.deepEqual(resolveProviderPrice(null, { usage: { inputTokens: 3 } }), { status: "unknown", unpricedTokens: 3 });
 assert.deepEqual(await fetchProviderBalance(null, { id: "listed", displayName: "Listed Provider" }, { now: () => 111 }), {
   id: "listed",
