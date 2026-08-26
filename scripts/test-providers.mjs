@@ -2,7 +2,24 @@ import assert from "node:assert/strict";
 import anthropic from "../lib/providers/anthropic.js";
 import deepseek from "../lib/providers/deepseek.js";
 import gemini from "../lib/providers/gemini.js";
+import minimax from "../lib/providers/minimax.js";
 import openai from "../lib/providers/openai.js";
+import qwen from "../lib/providers/qwen.js";
+import zhipu from "../lib/providers/zhipu.js";
+
+const UNIT_TOKENS = 1_000_000;
+const QWEN_SOURCE = {
+  url: "https://help.aliyun.com/zh/model-studio/model-pricing",
+  verifiedAt: "2026-08-26"
+};
+const ZHIPU_SOURCE = {
+  url: "https://bigmodel.cn/pricing",
+  verifiedAt: "2026-08-26"
+};
+const MINIMAX_SOURCE = {
+  url: "https://platform.minimaxi.com/docs/guides/pricing-paygo",
+  verifiedAt: "2026-08-26"
+};
 
 function weekdayAt(hour) {
   return Date.UTC(2026, 7, 26, hour, 0, 0);
@@ -24,6 +41,53 @@ function textUsage({
   cacheWriteTokens = 0
 } = {}) {
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
+function quoted(tokens, rate) {
+  return Number((((Math.max(0, Number(tokens) || 0)) / UNIT_TOKENS) * rate).toFixed(6));
+}
+
+function expectedQuote({
+  status = "priced",
+  currency = "CNY",
+  usage,
+  inputRate,
+  outputRate,
+  cacheReadRate = 0,
+  cacheWriteRate = 0,
+  cacheReadNull = false,
+  cacheWriteNull = false,
+  unpricedTokens = 0,
+  pricingBasis = "current-public-price",
+  source
+}) {
+  const breakdown = {
+    input: quoted(usage?.inputTokens, inputRate),
+    output: quoted(usage?.outputTokens, outputRate),
+    cacheRead: cacheReadNull ? null : quoted(usage?.cacheReadTokens, cacheReadRate),
+    cacheWrite: cacheWriteNull ? null : quoted(usage?.cacheWriteTokens, cacheWriteRate)
+  };
+  return {
+    status,
+    currency,
+    amount: Number((
+      breakdown.input +
+      breakdown.output +
+      (breakdown.cacheRead ?? 0) +
+      (breakdown.cacheWrite ?? 0)
+    ).toFixed(6)),
+    breakdown,
+    unpricedTokens,
+    pricingBasis,
+    source
+  };
+}
+
+function assertUnknown(adapter, model, usage = millionUsage()) {
+  assert.deepEqual(adapter.resolvePrice({ model, usage, occurredAt: weekdayAt(10) }), {
+    status: "unknown",
+    unpricedTokens: usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  });
 }
 
 function assertPricingOnly(adapter) {
@@ -486,5 +550,494 @@ assert.deepEqual(gemini.resolvePrice({
   status: "unknown",
   unpricedTokens: 4_000_000
 });
+
+assertPricingOnly(qwen);
+assert.equal(qwen.matches({ id: "qwen" }), true);
+assert.equal(qwen.matches({ id: "dashscope" }), true);
+assert.equal(qwen.matches({ id: "aliyun" }), true);
+assert.equal(qwen.matches({ id: "qwen-main", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1" }), true);
+assert.equal(qwen.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(qwen.normalizeConfig({ id: "qwen-main" }), {
+  id: "qwen-main",
+  adapterId: "qwen",
+  displayName: "qwen-main",
+  baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  apiKeyEnv: "DASHSCOPE_API_KEY"
+});
+
+assert.deepEqual(qwen.resolvePrice({
+  model: "qwen3.8-max",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+  inputRate: 12,
+  outputRate: 36,
+  source: QWEN_SOURCE
+}));
+
+for (const [inputTokens, inputRate] of [
+  [255_999, 2],
+  [256_000, 2],
+  [256_001, 6]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3.7-plus",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate: inputTokens <= 256_000 ? 8 : 24,
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [127_999, 0.8, 4.8],
+  [128_000, 0.8, 4.8],
+  [128_001, 2, 12],
+  [255_999, 2, 12],
+  [256_000, 2, 12],
+  [256_001, 4, 24]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3.5-plus",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [127_999, 0.8, 2],
+  [128_000, 0.8, 2],
+  [128_001, 2.4, 20],
+  [255_999, 2.4, 20],
+  [256_000, 2.4, 20],
+  [256_001, 4.8, 48]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen-plus",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    status: "partial",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    pricingBasis: "current-public-price-partial-context",
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [31_999, 0.2, 0.8],
+  [32_000, 0.2, 0.8],
+  [32_001, 0.6, 2.4],
+  [255_999, 0.6, 2.4],
+  [256_000, 0.6, 2.4],
+  [256_001, 1.2, 4.8]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3.7-flash",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [127_999, 0.2, 2],
+  [128_000, 0.2, 2],
+  [128_001, 0.8, 8],
+  [255_999, 0.8, 8],
+  [256_000, 0.8, 8],
+  [256_001, 1.2, 12]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3.5-flash",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [127_999, 0.15, 1.5],
+  [128_000, 0.15, 1.5],
+  [128_001, 0.6, 6],
+  [255_999, 0.6, 6],
+  [256_000, 0.6, 6],
+  [256_001, 1.2, 12]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen-flash",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+assert.deepEqual(qwen.resolvePrice({
+  model: "qwen-turbo",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  status: "partial",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+  inputRate: 0.3,
+  outputRate: 0.6,
+  pricingBasis: "current-public-price-partial-context",
+  source: QWEN_SOURCE
+}));
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [31_999, 4, 16],
+  [32_000, 4, 16],
+  [32_001, 6, 24],
+  [127_999, 6, 24],
+  [128_000, 6, 24],
+  [128_001, 10, 40],
+  [255_999, 10, 40],
+  [256_000, 10, 40],
+  [256_001, 20, 200]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3-coder-plus",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate] of [
+  [31_999, 1, 4],
+  [32_000, 1, 4],
+  [32_001, 1.5, 6],
+  [127_999, 1.5, 6],
+  [128_000, 1.5, 6],
+  [128_001, 2.5, 10],
+  [255_999, 2.5, 10],
+  [256_000, 2.5, 10],
+  [256_001, 5, 25]
+]) {
+  assert.deepEqual(qwen.resolvePrice({
+    model: "qwen3-coder-flash",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    source: QWEN_SOURCE
+  }));
+}
+
+assert.deepEqual(qwen.resolvePrice({
+  model: "qwen3.8-max",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 25, cacheWriteTokens: 75 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  status: "partial",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 25, cacheWriteTokens: 75 }),
+  inputRate: 12,
+  outputRate: 36,
+  cacheReadNull: true,
+  cacheWriteNull: true,
+  unpricedTokens: 100,
+  pricingBasis: "current-public-price-partial-context",
+  source: QWEN_SOURCE
+}));
+
+assert.deepEqual(qwen.resolvePrice({
+  model: "qwen3.5-plus",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: textUsage(),
+  inputRate: 0.8,
+  outputRate: 4.8,
+  source: QWEN_SOURCE
+}));
+assertUnknown(qwen, "proxy/qwen-plus");
+
+assertPricingOnly(zhipu);
+assert.equal(zhipu.matches({ id: "zhipu" }), true);
+assert.equal(zhipu.matches({ id: "bigmodel" }), true);
+assert.equal(zhipu.matches({ id: "glm-main", baseURL: "https://open.bigmodel.cn/api/paas/v4" }), true);
+assert.equal(zhipu.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(zhipu.normalizeConfig({ id: "glm-main" }), {
+  id: "glm-main",
+  adapterId: "zhipu",
+  displayName: "glm-main",
+  baseURL: "https://open.bigmodel.cn/api/paas/v4",
+  apiKeyEnv: "ZHIPU_API_KEY"
+});
+
+for (const model of ["glm-5.3", "glm-5.2"]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model,
+    usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    inputRate: 8,
+    outputRate: 28,
+    cacheReadRate: 2,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate, cacheReadRate] of [
+  [31_999, 6, 24, 1.3],
+  [32_000, 8, 28, 2],
+  [32_001, 8, 28, 2]
+]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model: "glm-5.1",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate, cacheReadRate] of [
+  [31_999, 5, 22, 1.2],
+  [32_000, 7, 26, 1.8],
+  [32_001, 7, 26, 1.8]
+]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model: "glm-5-turbo",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+for (const [inputTokens, inputRate, outputRate, cacheReadRate] of [
+  [31_999, 4, 18, 1],
+  [32_000, 6, 22, 1.5],
+  [32_001, 6, 22, 1.5]
+]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model: "glm-5",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+for (const [inputTokens, outputTokens, inputRate, outputRate, cacheReadRate] of [
+  [31_999, 199, 2, 8, 0.4],
+  [31_999, 200, 3, 14, 0.6],
+  [32_000, 199, 4, 16, 0.8],
+  [32_001, 200, 4, 16, 0.8]
+]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model: "glm-4.7",
+    usage: textUsage({ inputTokens, outputTokens, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+for (const [inputTokens, outputTokens, inputRate, outputRate, cacheReadRate] of [
+  [31_999, 199, 0.8, 2, 0.16],
+  [31_999, 200, 0.8, 6, 0.16],
+  [32_000, 199, 1.2, 8, 0.24],
+  [32_001, 200, 1.2, 8, 0.24]
+]) {
+  assert.deepEqual(zhipu.resolvePrice({
+    model: "glm-4.5-air",
+    usage: textUsage({ inputTokens, outputTokens, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: ZHIPU_SOURCE
+  }));
+}
+
+assert.deepEqual(zhipu.resolvePrice({
+  model: "glm-4.7-flashx",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+  inputRate: 0.5,
+  outputRate: 3,
+  cacheReadRate: 0.1,
+  source: ZHIPU_SOURCE
+}));
+
+assert.deepEqual(zhipu.resolvePrice({
+  model: "glm-4.7-flash",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: millionUsage(),
+  inputRate: 0,
+  outputRate: 0,
+  cacheReadRate: 0,
+  cacheWriteRate: 0,
+  source: ZHIPU_SOURCE
+}));
+
+assert.deepEqual(zhipu.resolvePrice({
+  model: "glm-5.3",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheWriteTokens: 17 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  status: "partial",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000, cacheWriteTokens: 17 }),
+  inputRate: 8,
+  outputRate: 28,
+  cacheWriteNull: true,
+  unpricedTokens: 17,
+  pricingBasis: "current-public-price-partial-context",
+  source: ZHIPU_SOURCE
+}));
+
+assert.deepEqual(zhipu.resolvePrice({
+  model: "glm-4.7-flashx",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: textUsage(),
+  inputRate: 0.5,
+  outputRate: 3,
+  cacheReadRate: 0.1,
+  source: ZHIPU_SOURCE
+}));
+assertUnknown(zhipu, "proxy/glm-5.3");
+
+assertPricingOnly(minimax);
+assert.equal(minimax.matches({ id: "minimax" }), true);
+assert.equal(minimax.matches({ id: "minimax-main", baseURL: "https://api.minimaxi.com/v1" }), true);
+assert.equal(minimax.matches({ id: "minimax-io", baseURL: "https://api.minimax.io/v1" }), true);
+assert.equal(minimax.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(minimax.normalizeConfig({ id: "minimax-main" }), {
+  id: "minimax-main",
+  adapterId: "minimax",
+  displayName: "minimax-main",
+  baseURL: "https://api.minimaxi.com/v1",
+  apiKeyEnv: "MINIMAX_API_KEY"
+});
+
+for (const [inputTokens, inputRate, outputRate, cacheReadRate] of [
+  [511_999, 2.1, 8.4, 0.42],
+  [512_000, 2.1, 8.4, 0.42],
+  [512_001, 4.2, 16.8, 0.84]
+]) {
+  assert.deepEqual(minimax.resolvePrice({
+    model: "MiniMax-M3",
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    occurredAt: weekdayAt(10)
+  }), expectedQuote({
+    usage: textUsage({ inputTokens, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }),
+    inputRate,
+    outputRate,
+    cacheReadRate,
+    source: MINIMAX_SOURCE
+  }));
+}
+
+assert.deepEqual(minimax.resolvePrice({
+  model: "MiniMax-M3",
+  usage: textUsage({ inputTokens: 512_000, outputTokens: 1_000_000, cacheWriteTokens: 33 }),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  status: "partial",
+  usage: textUsage({ inputTokens: 512_000, outputTokens: 1_000_000, cacheWriteTokens: 33 }),
+  inputRate: 2.1,
+  outputRate: 8.4,
+  cacheWriteNull: true,
+  unpricedTokens: 33,
+  pricingBasis: "current-public-price-partial-context",
+  source: MINIMAX_SOURCE
+}));
+
+assert.deepEqual(minimax.resolvePrice({
+  model: "MiniMax-M2.7",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: millionUsage(),
+  inputRate: 2.1,
+  outputRate: 8.4,
+  cacheReadRate: 0.42,
+  cacheWriteRate: 2.625,
+  source: MINIMAX_SOURCE
+}));
+
+assert.deepEqual(minimax.resolvePrice({
+  model: "MiniMax-M2.7-highspeed",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: millionUsage(),
+  inputRate: 4.2,
+  outputRate: 16.8,
+  cacheReadRate: 0.42,
+  cacheWriteRate: 2.625,
+  source: MINIMAX_SOURCE
+}));
+
+assert.deepEqual(minimax.resolvePrice({
+  model: "MiniMax-M2.7",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), expectedQuote({
+  usage: textUsage(),
+  inputRate: 2.1,
+  outputRate: 8.4,
+  cacheReadRate: 0.42,
+  cacheWriteRate: 2.625,
+  source: MINIMAX_SOURCE
+}));
+assertUnknown(minimax, "proxy/MiniMax-M3");
 
 console.log("providers ok");

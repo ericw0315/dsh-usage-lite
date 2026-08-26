@@ -49,7 +49,7 @@
     }
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/provider-runtime.js && node --check lib/providers/deepseek.js && node --check lib/providers/openai.js && node --check lib/providers/anthropic.js && node --check lib/providers/gemini.js && node --check scripts/test-bundle.mjs && node --check scripts/test-provider-runtime.mjs && node --check scripts/test-providers.mjs && node --check scripts/test-server.mjs && node --check scripts/smoke-client.mjs",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/provider-runtime.js && node --check lib/providers/deepseek.js && node --check lib/providers/openai.js && node --check lib/providers/anthropic.js && node --check lib/providers/gemini.js && node --check lib/providers/qwen.js && node --check lib/providers/zhipu.js && node --check lib/providers/minimax.js && node --check scripts/test-bundle.mjs && node --check scripts/test-provider-runtime.mjs && node --check scripts/test-providers.mjs && node --check scripts/test-server.mjs && node --check scripts/smoke-client.mjs",
     "test": "node scripts/test-provider-runtime.mjs && node scripts/test-providers.mjs && node scripts/test-bundle.mjs && node scripts/test-server.mjs && node scripts/smoke-client.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
