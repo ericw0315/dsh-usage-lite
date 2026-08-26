@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import anthropic from "../lib/providers/anthropic.js";
 import deepseek from "../lib/providers/deepseek.js";
+import gemini from "../lib/providers/gemini.js";
+import openai from "../lib/providers/openai.js";
 
 function weekdayAt(hour) {
   return Date.UTC(2026, 7, 26, hour, 0, 0);
@@ -12,6 +15,20 @@ function millionUsage() {
     cacheReadTokens: 1_000_000,
     cacheWriteTokens: 1_000_000
   };
+}
+
+function textUsage({
+  inputTokens = 0,
+  outputTokens = 0,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0
+} = {}) {
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
+function assertPricingOnly(adapter) {
+  assert.deepEqual(adapter.capabilities, { balance: false, pricing: true });
+  assert.equal("fetchBalance" in adapter, false);
 }
 
 assert.equal(deepseek.matches({ id: "deepseek-official" }), true);
@@ -171,6 +188,274 @@ assert.equal(legacyReasoner.amount, 25);
 
 assert.deepEqual(deepseek.resolvePrice({
   model: "deepseek-v4-private",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
+
+assertPricingOnly(openai);
+assert.equal(openai.matches({ id: "openai" }), true);
+assert.equal(openai.matches({ id: "openai-main", baseURL: "https://api.openai.com/v1" }), true);
+assert.equal(openai.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(openai.normalizeConfig({ id: "openai-main" }), {
+  id: "openai-main",
+  adapterId: "openai",
+  displayName: "openai-main",
+  baseURL: "https://api.openai.com/v1",
+  apiKeyEnv: "OPENAI_API_KEY"
+});
+
+const openaiLuna = openai.resolvePrice({
+  model: "GPT-5.6-LUNA",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+});
+assert.deepEqual(openaiLuna, {
+  status: "priced",
+  currency: "USD",
+  amount: 1.67,
+  breakdown: {
+    input: 0.2,
+    output: 1.2,
+    cacheRead: 0.02,
+    cacheWrite: 0.25
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price-partial-context",
+  source: {
+    url: "https://developers.openai.com/api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(openai.resolvePrice({
+  model: "gpt-5.6-terra",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 0,
+  breakdown: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price-partial-context",
+  source: {
+    url: "https://developers.openai.com/api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(openai.resolvePrice({
+  model: "private-model",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
+
+assertPricingOnly(anthropic);
+assert.equal(anthropic.matches({ id: "anthropic" }), true);
+assert.equal(anthropic.matches({ id: "claude" }), true);
+assert.equal(anthropic.matches({ id: "anthropic-main", baseURL: "https://api.anthropic.com/v1/messages" }), true);
+assert.equal(anthropic.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(anthropic.normalizeConfig({ id: "anthropic-main" }), {
+  id: "anthropic-main",
+  adapterId: "anthropic",
+  displayName: "anthropic-main",
+  baseURL: "https://api.anthropic.com",
+  apiKeyEnv: "ANTHROPIC_API_KEY"
+});
+
+assert.deepEqual(anthropic.resolvePrice({
+  model: "claude-sonnet-5",
+  usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 12,
+  breakdown: {
+    input: 2,
+    output: 10,
+    cacheRead: 0,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price",
+  source: {
+    url: "https://platform.claude.com/docs/en/about-claude/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(anthropic.resolvePrice({
+  model: "claude-opus-4.7",
+  usage: textUsage({
+    inputTokens: 1_000_000,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000,
+    cacheWriteTokens: 1_000_000
+  }),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 36.75,
+  breakdown: {
+    input: 5,
+    output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price-partial-context",
+  source: {
+    url: "https://platform.claude.com/docs/en/about-claude/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(anthropic.resolvePrice({
+  model: "claude-haiku-4.5",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 0,
+  breakdown: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price",
+  source: {
+    url: "https://platform.claude.com/docs/en/about-claude/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(anthropic.resolvePrice({
+  model: "claude-private",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
+
+assertPricingOnly(gemini);
+assert.equal(gemini.matches({ id: "gemini" }), true);
+assert.equal(gemini.matches({ id: "google" }), true);
+assert.equal(gemini.matches({ id: "gemini-main", baseURL: "https://generativelanguage.googleapis.com/v1beta/models" }), true);
+assert.equal(gemini.matches({ id: "custom-gateway", baseURL: "https://gateway.example/v1" }), false);
+assert.deepEqual(gemini.normalizeConfig({ id: "gemini-main" }), {
+  id: "gemini-main",
+  adapterId: "gemini",
+  displayName: "gemini-main",
+  baseURL: "https://generativelanguage.googleapis.com",
+  apiKeyEnv: "GEMINI_API_KEY"
+});
+
+assert.deepEqual(gemini.resolvePrice({
+  model: "gemini-2.5-pro",
+  usage: textUsage({
+    inputTokens: 200_000,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000
+  }),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 10.375,
+  breakdown: {
+    input: 0.25,
+    output: 10,
+    cacheRead: 0.125,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price",
+  source: {
+    url: "https://ai.google.dev/gemini-api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(gemini.resolvePrice({
+  model: "gemini-2.5-pro",
+  usage: textUsage({
+    inputTokens: 200_001,
+    outputTokens: 1_000_000,
+    cacheReadTokens: 1_000_000
+  }),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 15.750003,
+  breakdown: {
+    input: 0.500003,
+    output: 15,
+    cacheRead: 0.25,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price",
+  source: {
+    url: "https://ai.google.dev/gemini-api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(gemini.resolvePrice({
+  model: "gemini-2.5-flash",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "partial",
+  currency: "USD",
+  amount: 2.83,
+  breakdown: {
+    input: 0.3,
+    output: 2.5,
+    cacheRead: 0.03,
+    cacheWrite: null
+  },
+  unpricedTokens: 1_000_000,
+  pricingBasis: "current-public-price-partial-context",
+  source: {
+    url: "https://ai.google.dev/gemini-api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(gemini.resolvePrice({
+  model: "gemini-2.5-flash-lite",
+  usage: textUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "priced",
+  currency: "USD",
+  amount: 0,
+  breakdown: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0
+  },
+  unpricedTokens: 0,
+  pricingBasis: "current-public-price",
+  source: {
+    url: "https://ai.google.dev/gemini-api/docs/pricing",
+    verifiedAt: "2026-08-26"
+  }
+});
+assert.deepEqual(gemini.resolvePrice({
+  model: "private-model",
   usage: millionUsage(),
   occurredAt: weekdayAt(10)
 }), {
