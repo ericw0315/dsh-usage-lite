@@ -17,6 +17,10 @@ function usageEvent({ seq, time, provider, model, inputTokens, outputTokens, cac
   };
 }
 
+function assertNoLegacyCost(entry) {
+  assert.equal("cost" in entry, false);
+}
+
 async function testExplicitProviderAggregation() {
   const plugin = await freshModule("explicit-provider");
   const at = Date.UTC(2026, 7, 20, 10, 0, 0);
@@ -39,6 +43,159 @@ async function testExplicitProviderAggregation() {
 
   assert.deepEqual(billing.providers.map((provider) => provider.id), ["deepseek-official"]);
   assert.deepEqual(billing.providers[0].models.map((model) => model.id), ["deepseek-v4-pro"]);
+  assertNoLegacyCost(billing.total);
+  assertNoLegacyCost(billing.providers[0]);
+  assertNoLegacyCost(billing.providers[0].models[0]);
+  assertNoLegacyCost(billing.days[0]);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 0.000522 }]);
+  assert.equal(billing.total.unpricedTokens, 0);
+}
+
+async function testRawCostAccumulationAcrossDays() {
+  const plugin = await freshModule("raw-cost-accumulation");
+  const firstDay = Date.UTC(2026, 7, 19, 10, 0, 0);
+  const secondDay = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const events = Array.from({ length: 16 }, (_, index) => usageEvent({
+    seq: index + 1,
+    time: index < 8 ? firstDay + index : secondDay + index,
+    provider: "openai",
+    model: "openai/gpt-5.6-luna",
+    inputTokens: 1,
+    outputTokens: 0
+  }));
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: { list: () => [{ id: "small-events", events }] },
+    persistence: { listSnapshots: async () => [] }
+  }));
+
+  assert.deepEqual(billing.days.map((day) => day.costs), [
+    [{ currency: "USD", amount: 0.000002 }],
+    [{ currency: "USD", amount: 0.000002 }]
+  ]);
+  assert.deepEqual(billing.providers[0].costs, [{ currency: "USD", amount: 0.000003 }]);
+  assert.deepEqual(billing.providers[0].models[0].costs, [{ currency: "USD", amount: 0.000003 }]);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 0.000003 }]);
+}
+
+async function testConfiguredOfficialProviderPricing() {
+  const plugin = await freshModule("configured-official-pricing");
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const settings = {
+    get: (name) => {
+      if (name === "llm-deepseek") return { apiKeyEnv: "DEEPSEEK_API_KEY", baseURL: "https://api.deepseek.com" };
+      if (name === "llm-pi-ai") return {
+        providers: {
+          "openai-main": { displayName: "OpenAI Main", apiKeyEnv: "OPENAI_API_KEY", baseURL: "https://api.openai.com/v1" },
+          "custom-gateway": { displayName: "Custom Gateway", baseURL: "https://gateway.example/v1" }
+        }
+      };
+      return void 0;
+    }
+  };
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: {
+      list: () => [{
+        id: "live-provider",
+        events: [
+          usageEvent({
+            seq: 1,
+            time: at,
+            provider: "openai-main",
+            model: "openai/gpt-5.6-luna",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000,
+            cacheReadTokens: 1_000_000,
+            cacheWriteTokens: 1_000_000
+          }),
+          usageEvent({
+            seq: 2,
+            time: at + 1000,
+            provider: "custom-gateway",
+            model: "openai/gpt-5.6-luna",
+            inputTokens: 600_000,
+            outputTokens: 400_000
+          })
+        ]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] },
+    settings
+  }));
+
+  assert.deepEqual(billing.providers.map((provider) => provider.id), ["custom-gateway", "openai-main"]);
+  assertNoLegacyCost(billing.total);
+  assertNoLegacyCost(billing.providers[0]);
+  assertNoLegacyCost(billing.providers[1]);
+  assertNoLegacyCost(billing.providers[1].models[0]);
+  assert.deepEqual(billing.providers[0].costs, []);
+  assert.equal(billing.providers[0].unpricedTokens, 1_000_000);
+  assert.deepEqual(billing.providers[1].costs, [{ currency: "USD", amount: 1.67 }]);
+  assert.equal(billing.providers[1].unpricedTokens, 0);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 1.67 }]);
+  assert.equal(billing.total.unpricedTokens, 1_000_000);
+}
+
+async function testModelPrefixPricingFallback() {
+  const plugin = await freshModule("model-prefix-pricing");
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: {
+      list: () => [{
+        id: "live-provider",
+        events: [usageEvent({
+          seq: 1,
+          time: at,
+          model: "anthropic/claude-sonnet-5",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] }
+  }));
+
+  assert.deepEqual(billing.providers.map((provider) => provider.id), ["anthropic"]);
+  assertNoLegacyCost(billing.total);
+  assertNoLegacyCost(billing.providers[0]);
+  assert.deepEqual(billing.providers[0].costs, [{ currency: "USD", amount: 12 }]);
+  assert.equal(billing.providers[0].unpricedTokens, 0);
+}
+
+async function testDeepSeekNamespacedModelsStayUnpriced() {
+  const plugin = await freshModule("deepseek-namespaced-models");
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: {
+      list: () => [{
+        id: "namespaced-models",
+        events: [
+          usageEvent({
+            seq: 1,
+            time: at,
+            provider: "deepseek-official",
+            model: "proxy/deepseek-v4-pro",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000
+          }),
+          usageEvent({
+            seq: 2,
+            time: at + 1000,
+            provider: "deepseek-official",
+            model: "proxy/deepseek-chat",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000
+          })
+        ]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] }
+  }));
+
+  assert.deepEqual(billing.providers.map((provider) => provider.id), ["deepseek-official"]);
+  assert.deepEqual(billing.providers[0].costs, []);
+  assert.equal(billing.providers[0].unpricedTokens, 4_000_000);
+  assert.deepEqual(billing.total.costs, []);
+  assert.equal(billing.total.unpricedTokens, 4_000_000);
 }
 
 async function freshModule(label) {
@@ -125,6 +282,7 @@ async function testConfiguredProviderAccounts() {
   assert.equal(body.providers[0].balance.remaining, 12.5);
   assert.equal(Number.isFinite(body.providers[0].fetchedAt), true);
   assert.equal(body.providers[1].supported, false);
+  assert.equal(body.providers[1].configured, true);
   assert.equal(body.providers[1].balance, null);
   assert.equal(balanceRequests, 1, "unsupported providers must not trigger balance requests");
 }
@@ -174,20 +332,111 @@ async function testDetailAggregation() {
   const plugin = await freshModule("detail");
   const routes = new Map();
   const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const settings = {
+    get: (name) => {
+      if (name === "llm-deepseek") return { apiKeyEnv: "DEEPSEEK_API_KEY", baseURL: "https://api.deepseek.com" };
+      if (name === "llm-pi-ai") return {
+        providers: {
+          "openai-main": { displayName: "OpenAI Main", apiKeyEnv: "OPENAI_API_KEY", baseURL: "https://api.openai.com/v1" }
+        }
+      };
+      return void 0;
+    }
+  };
   const sessions = {
     list: () => [{
       id: "live-a",
       events: [
-        usageEvent({ seq: 1, time: at, model: "deepseek/deepseek-chat", inputTokens: 1000, outputTokens: 500 }),
-        usageEvent({ seq: 2, time: at + 1000, model: "deepseek/deepseek-reasoner", inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 500 }),
-        usageEvent({ seq: 3, time: at + 2000, model: "openai/gpt-4o-mini", inputTokens: 100, outputTokens: 50 })
+        usageEvent({
+          seq: 1,
+          time: at,
+          model: "deepseek/deepseek-reasoner",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheReadTokens: 1_000_000,
+          cacheWriteTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 2,
+          time: at + 1000,
+          provider: "anthropic",
+          model: "anthropic/claude-sonnet-5",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 3,
+          time: at + 2000,
+          provider: "deepseek-official",
+          model: "deepseek-v4-pro",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheReadTokens: 1_000_000,
+          cacheWriteTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 4,
+          time: at + 3000,
+          provider: "gemini",
+          model: "gemini/gemini-2.5-flash",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 5,
+          time: at + 4000,
+          provider: "minimax",
+          model: "minimax/minimax-m2.7",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 6,
+          time: at + 5000,
+          provider: "openai-main",
+          model: "openai/gpt-5.6-luna",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 7,
+          time: at + 6000,
+          provider: "qwen",
+          model: "qwen/qwen3.5-flash",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 8,
+          time: at + 7000,
+          provider: "zhipu",
+          model: "zhipu/glm-4.7-flashx",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 9,
+          time: at + 8000,
+          provider: "custom",
+          model: "openai/private-model",
+          inputTokens: 600_000,
+          outputTokens: 400_000
+        })
       ]
     }]
   };
   const persistence = {
     listSnapshots: async () => [{ header: { id: "persisted-a" } }],
     readFrom: async () => ({
-      events: [usageEvent({ seq: 1, time: at - 86400000, model: "deepseek-chat", inputTokens: 300, outputTokens: 200 })]
+      events: [usageEvent({
+        seq: 1,
+        time: at - 86400000,
+        model: "deepseek-chat",
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000
+      })]
     }),
     list: async () => []
   };
@@ -195,6 +444,7 @@ async function testDetailAggregation() {
     sessions,
     persistence,
     routes,
+    settings,
     fetchImpl: async () => ({
       ok: true,
       status: 200,
@@ -211,21 +461,74 @@ async function testDetailAggregation() {
   }, detail);
   const body = JSON.parse(detail.body);
   assert.equal(detail.status, 200);
-  assert.equal(body.providers.length, 1);
-  assert.equal(body.billing.total.tokens, 5650);
+  assert.deepEqual(body.providers.map((provider) => provider.id), ["deepseek-official", "openai-main"]);
+  assert.equal(body.billing.total.tokens, 25_000_000);
   assert.equal(body.billing.days.length, 2);
   assert.equal(body.billing.days[0].providers[0].id, "deepseek");
-  assert.deepEqual(body.billing.providers.map((provider) => provider.id), ["deepseek", "openai"]);
-  assert.deepEqual(body.billing.providers[0].models.map((model) => [model.id, model.tokens]), [
-    ["deepseek-chat", 2000],
-    ["deepseek-reasoner", 3500]
+  assert.deepEqual(body.billing.total.costs, [
+    { currency: "CNY", amount: 64.7 },
+    { currency: "USD", amount: 17.943625 }
   ]);
+  assertNoLegacyCost(body.billing.total);
+  assert.equal(body.billing.total.unpricedTokens, 1_000_000);
+  assert.deepEqual(body.billing.providers.map((provider) => provider.id), [
+    "anthropic",
+    "custom",
+    "deepseek",
+    "deepseek-official",
+    "gemini",
+    "minimax",
+    "openai-main",
+    "qwen",
+    "zhipu"
+  ]);
+  assert.deepEqual(body.billing.providers[0].costs, [{ currency: "USD", amount: 12 }]);
+  assert.equal(body.billing.providers[0].unpricedTokens, 0);
   assert.deepEqual(body.billing.providers[1].models.map((model) => [model.id, model.tokens]), [
-    ["gpt-4o-mini", 150]
+    ["private-model", 1_000_000]
   ]);
-  assert.ok(body.billing.total.cost > 0);
+  assert.deepEqual(body.billing.providers[1].costs, []);
+  assert.equal(body.billing.providers[1].unpricedTokens, 1_000_000);
+  assert.deepEqual(body.billing.providers[2].models.map((model) => [model.id, model.tokens]), [
+    ["deepseek-chat", 4_000_000],
+    ["deepseek-reasoner", 4_000_000]
+  ]);
+  assert.deepEqual(body.billing.providers[2].costs, [{ currency: "CNY", amount: 37.5 }]);
+  assert.equal(body.billing.providers[2].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[3].models.map((model) => [model.id, model.tokens]), [
+    ["deepseek-v4-pro", 4_000_000]
+  ]);
+  assert.deepEqual(body.billing.providers[3].costs, [{ currency: "USD", amount: 1.743625 }]);
+  assert.equal(body.billing.providers[3].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[4].costs, [{ currency: "USD", amount: 2.8 }]);
+  assert.equal(body.billing.providers[4].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[5].costs, [{ currency: "CNY", amount: 10.5 }]);
+  assert.equal(body.billing.providers[5].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[6].costs, [{ currency: "USD", amount: 1.4 }]);
+  assert.equal(body.billing.providers[6].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[7].costs, [{ currency: "CNY", amount: 13.2 }]);
+  assert.equal(body.billing.providers[7].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[8].costs, [{ currency: "CNY", amount: 3.5 }]);
+  assert.equal(body.billing.providers[8].unpricedTokens, 0);
+  assert.deepEqual(body.billing.days[1].costs, [
+    { currency: "CNY", amount: 52.2 },
+    { currency: "USD", amount: 17.943625 }
+  ]);
+  assertNoLegacyCost(body.billing.days[1]);
+  assert.equal(body.billing.days[1].unpricedTokens, 1_000_000);
   assert.equal(body.billing.days[0].date, "2026-08-19");
   assert.equal(body.billing.days[1].date, "2026-08-20");
+  for (const day of body.billing.days) {
+    assertNoLegacyCost(day);
+    for (const provider of day.providers) {
+      assertNoLegacyCost(provider);
+      for (const model of provider.models) assertNoLegacyCost(model);
+    }
+  }
+  for (const provider of body.billing.providers) {
+    assertNoLegacyCost(provider);
+    for (const model of provider.models) assertNoLegacyCost(model);
+  }
 }
 
 async function testDetailDegradesGracefullyWhenBalanceFails() {
@@ -252,8 +555,93 @@ async function testDetailDegradesGracefullyWhenBalanceFails() {
   assert.equal(body.providers.length, 1);
   assert.equal(body.providers[0].id, "deepseek-official");
   assert.equal(body.provider.balance, null);
-  assert.equal(Number.isFinite(body.provider.fetchedAt), true);
-  assert.match(body.provider.error, /network-down/);
+  assert.equal("fetchedAt" in body.provider, false);
+  assert.equal(body.provider.error, "upstream-error");
+}
+
+async function testAmbiguousConfiguredProvidersDegradeSafely() {
+  const plugin = await freshModule("ambiguous-configured-providers");
+  const routes = new Map();
+  let balanceRequests = 0;
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const settings = {
+    get: (name) => {
+      if (name === "llm-deepseek") {
+        return { apiKeyEnv: "DEEPSEEK_API_KEY", baseURL: "https://api.anthropic.com" };
+      }
+      if (name === "llm-pi-ai") {
+        return {
+          providers: {
+            openai: {
+              displayName: "Ambiguous OpenAI",
+              apiKeyEnv: "OPENAI_API_KEY",
+              baseURL: "https://api.anthropic.com"
+            }
+          }
+        };
+      }
+      return void 0;
+    }
+  };
+  await plugin.apply(makeContext({
+    sessions: {
+      list: () => [{
+        id: "ambiguous-provider",
+        events: [usageEvent({
+          seq: 1,
+          time: at,
+          provider: "openai",
+          model: "openai/gpt-5.6-luna",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000
+        })]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] },
+    routes,
+    settings,
+    fetchImpl: async () => {
+      balanceRequests += 1;
+      throw new Error("ambiguous accounts must not issue balance requests");
+    }
+  }));
+
+  const summary = makeResponse();
+  await routes.get(plugin.SUMMARY_PATH)({
+    method: "GET",
+    url: plugin.SUMMARY_PATH,
+    headers: { host: "localhost:3080" },
+    socket: { remoteAddress: "127.0.0.1" }
+  }, summary);
+  const summaryBody = JSON.parse(summary.body);
+  assert.equal(summary.status, 200, "ambiguous primary account must not reject the summary route");
+  assert.deepEqual(summaryBody.provider, {
+    id: "deepseek-official",
+    displayName: "DeepSeek",
+    supported: false,
+    configured: true,
+    balance: null,
+    error: "ambiguous-adapter"
+  });
+
+  const detail = makeResponse();
+  await routes.get(plugin.DETAIL_PATH)({
+    method: "GET",
+    url: plugin.DETAIL_PATH,
+    headers: { host: "localhost:3080" },
+    socket: { remoteAddress: "127.0.0.1" }
+  }, detail);
+  const detailBody = JSON.parse(detail.body);
+  assert.equal(detail.status, 200, "ambiguous configured accounts must not reject the detail route");
+  assert.deepEqual(detailBody.providers.map((provider) => [provider.id, provider.error]), [
+    ["deepseek-official", "ambiguous-adapter"],
+    ["openai", "ambiguous-adapter"]
+  ]);
+  assert.deepEqual(detailBody.billing.providers[0].costs, []);
+  assert.equal(detailBody.billing.providers[0].unpricedTokens, 2_000_000);
+  assert.equal(balanceRequests, 0);
+  assert.equal(detail.body.includes("apiKeyEnv"), false);
+  assert.equal(detail.body.includes("baseURL"), false);
 }
 
 const root = await mkdtemp(join(tmpdir(), "dsh-usage-lite-"));
@@ -263,8 +651,13 @@ try {
   await testRoutes();
   await testConfiguredProviderAccounts();
   await testExplicitProviderAggregation();
+  await testRawCostAccumulationAcrossDays();
+  await testConfiguredOfficialProviderPricing();
+  await testModelPrefixPricingFallback();
+  await testDeepSeekNamespacedModelsStayUnpriced();
   await testDetailAggregation();
   await testDetailDegradesGracefullyWhenBalanceFails();
+  await testAmbiguousConfiguredProvidersDegradeSafely();
   console.log("server ok");
 } finally {
   globalThis.fetch = originalFetch;

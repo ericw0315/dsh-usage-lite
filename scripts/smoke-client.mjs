@@ -42,6 +42,15 @@ if (typeof exports_.ProviderAccountsView !== "function") throw new Error("missin
 if (typeof exports_.BillingView !== "function") throw new Error("missing billing view component");
 if (typeof exports_.buildUsageHeatmap !== "function") throw new Error("missing usage heatmap helper");
 if (typeof exports_.selectSummaryProvider !== "function") throw new Error("missing summary provider selection helper");
+if (typeof exports_.fmtCosts !== "function") throw new Error("missing multi-currency formatter");
+if (typeof exports_.refreshFailedOf !== "function") throw new Error("missing refresh failure classifier");
+const formatted = exports_.fmtCosts([
+  { currency: "CNY", amount: 0.18 },
+  { currency: "USD", amount: 0.04 }
+]);
+if (!formatted.includes("¥") || !formatted.includes("$") || !formatted.includes(" + ")) {
+  throw new Error("must render separate CNY and USD estimates");
+}
 const selectedSummaryProvider = exports_.selectSummaryProvider({
   providers: [
     { id: "deepseek-official", supported: true, balance: { remaining: 8.8 } },
@@ -72,7 +81,7 @@ if (noSupportedSummaryProvider !== null) throw new Error("all-unsupported accoun
 const mergedRefresh = exports_.mergeRefreshResults({
   summaryResult: { status: "fulfilled", value: { provider: { id: "deepseek-official", balance: { remaining: 8.8, currency: "CNY" } } } },
   detailResult: { status: "rejected", reason: new Error("boom") },
-  previousDetail: { providers: [{ id: "deepseek-official", displayName: "DeepSeek" }], billing: { total: { tokens: 0, cost: 0 }, days: [] } }
+  previousDetail: { providers: [{ id: "deepseek-official", displayName: "DeepSeek" }], billing: { total: { tokens: 0, costs: [], unpricedTokens: 0 }, days: [] } }
 });
 if (mergedRefresh.summary?.provider?.balance?.remaining !== 8.8) throw new Error("summary must still update when detail refresh fails");
 if (mergedRefresh.detail?.providers?.length !== 1) throw new Error("detail fallback must preserve previous provider list");
@@ -83,13 +92,13 @@ const preservedRefresh = exports_.mergeRefreshResults({
     value: {
       providers: [{ id: "deepseek-official", displayName: "DeepSeek", supported: true, configured: true, error: "network-down", balance: null }],
       provider: { id: "deepseek-official", error: "network-down", balance: null },
-      billing: { total: { tokens: 0, cost: 0 }, providers: [], days: [] }
+      billing: { total: { tokens: 0, costs: [], unpricedTokens: 0 }, providers: [], days: [] }
     }
   },
   previousDetail: {
     providers: [{ id: "deepseek-official", displayName: "DeepSeek", supported: true, configured: true, fetchedAt: 1234, balance: { remaining: 8.8, currency: "CNY" } }],
     provider: { id: "deepseek-official", fetchedAt: 1234, balance: { remaining: 8.8, currency: "CNY" } },
-    billing: { total: { tokens: 0, cost: 0 }, providers: [], days: [] }
+    billing: { total: { tokens: 0, costs: [], unpricedTokens: 0 }, providers: [], days: [] }
   }
 });
 if (preservedRefresh.detail?.provider?.balance?.remaining !== 8.8 || preservedRefresh.detail?.provider?.fetchedAt !== 1234) {
@@ -101,6 +110,37 @@ const initialFailedRefresh = exports_.mergeRefreshResults({
   previousDetail: null
 });
 if (initialFailedRefresh.detail !== null) throw new Error("an initial request failure must not fabricate a configured provider");
+
+const expectedAccountStates = {
+  summaryResult: {
+    status: "fulfilled",
+    value: { provider: { id: "deepseek-official", configured: false, balance: null, error: "not-configured" } }
+  },
+  detailResult: {
+    status: "fulfilled",
+    value: {
+      providers: [
+        { id: "deepseek-official", configured: false, balance: null, error: "not-configured" },
+        { id: "openai-main", supported: false, balance: null, error: "unsupported" }
+      ]
+    }
+  }
+};
+if (exports_.refreshFailedOf(expectedAccountStates)) {
+  throw new Error("unsupported and not-configured accounts must not make a successful panel refresh look failed");
+}
+if (!exports_.refreshFailedOf({
+  summaryResult: { status: "fulfilled", value: { provider: { id: "deepseek-official", error: "upstream-error" } } },
+  detailResult: { status: "fulfilled", value: { providers: [] } }
+})) {
+  throw new Error("unexpected account errors must still make the panel refresh look failed");
+}
+if (!exports_.refreshFailedOf({
+  summaryResult: { status: "rejected", reason: new Error("offline") },
+  detailResult: { status: "fulfilled", value: { providers: [] } }
+})) {
+  throw new Error("request rejection must still make the panel refresh look failed");
+}
 
 const labels = {
   "provider.balance": "Current balance",
@@ -122,7 +162,7 @@ const labels = {
   "billing.totalCost": "Total cost",
   "billing.byModel": "By provider and model",
   "billing.modelsEmpty": "No provider or model usage yet",
-  "billing.estimatedNotice": "Costs are estimates and may differ from provider billing.",
+  "billing.estimatedNotice": "Costs are local estimates based on public list prices and may differ from invoices because of price changes, tiers, discounts, regions, service modes, or incomplete event details.",
   "billing.daily": "Daily usage",
   "billing.weekdays": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
   "billing.months": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec",
@@ -131,12 +171,14 @@ const labels = {
   "billing.cost": "Cost",
   "billing.dayTokens": "{value} tokens",
   "billing.dayCost": "{value}",
+  "billing.unpricedTokens": "{value} unpriced tokens",
+  "billing.unpricedNotice": "Some usage could not be priced with current public metadata.",
   "billing.empty": "No billing data yet"
 };
 const t = (key) => labels[key] ?? key;
 const heatmap = exports_.buildUsageHeatmap([
-  { date: "2026-08-02", tokens: 100, cost: 0.1 },
-  { date: "2026-08-21", tokens: 400, cost: 0.4 }
+  { date: "2026-08-02", tokens: 100, costs: [{ currency: "USD", amount: 0.1 }], unpricedTokens: 0 },
+  { date: "2026-08-21", tokens: 400, costs: [{ currency: "USD", amount: 0.4 }], unpricedTokens: 0 }
 ], "2026-08-21");
 if (heatmap.length !== 27 || heatmap.some((week) => week.length !== 7)) throw new Error("heatmap must render the latest 27 complete weeks");
 if (heatmap[0][0]?.date !== "2026-02-16") throw new Error("heatmap must start on Monday");
@@ -182,23 +224,50 @@ if (!loadingProviderMarkup.includes("Loading provider accounts") || loadingProvi
 
 const billingMarkup = renderToStaticMarkup(react.createElement(exports_.BillingView, {
   billing: {
-    total: { tokens: 1234567, cost: 18.5 },
+    total: {
+      tokens: 1234567,
+      costs: [
+        { currency: "CNY", amount: 0.18 },
+        { currency: "USD", amount: 0.04 }
+      ],
+      unpricedTokens: 7654
+    },
     providers: [{
       id: "deepseek",
       tokens: 1234567,
-      cost: 7.25,
-      models: [{ id: "deepseek-chat", tokens: 1234567, cost: 1.5 }]
+      costs: [{ currency: "USD", amount: 7.25 }],
+      unpricedTokens: 0,
+      models: [
+        { id: "deepseek-chat", tokens: 1234567, costs: [{ currency: "USD", amount: 1.5 }], unpricedTokens: 0 },
+        { id: "deepseek-free", tokens: 1200, costs: [{ currency: "USD", amount: 0 }], unpricedTokens: 0 },
+        { id: "custom-gateway", tokens: 7654, costs: [], unpricedTokens: 7654 }
+      ]
     }],
-    days: [{ date: "2026-08-21", tokens: 34567, cost: 1.25 }]
+    days: [{
+      date: "2026-08-21",
+      tokens: 34567,
+      costs: [{ currency: "USD", amount: 1.25 }],
+      unpricedTokens: 100
+    }]
   },
   t
 }));
 if (!billingMarkup.includes("1,234,567") || !billingMarkup.includes("2026-08-21")) throw new Error("billing view must show totals and daily rows");
 if (!billingMarkup.includes("deepseek-chat") || !billingMarkup.includes("By provider and model")) throw new Error("billing view must show provider and model breakdown");
+if (!billingMarkup.includes("0.18") || !billingMarkup.includes("$0.04") || !billingMarkup.includes(" + ")) {
+  throw new Error("billing view must render mixed-currency totals without conversion");
+}
+if (!billingMarkup.includes("Some usage could not be priced") || !billingMarkup.includes("7,654 unpriced tokens")) {
+  throw new Error("billing view must show an unpriced-token notice when pricing is incomplete");
+}
+if (!billingMarkup.includes("$0.00")) throw new Error("known zero-cost usage must render as zero in its own currency");
+if (billingMarkup.includes("custom-gateway</span><span class=\"dul_modelValue\">7,654 tokens</span><span class=\"dul_modelValue\">$0.00</span>")) {
+  throw new Error("unpriced usage must not render as free");
+}
 const providerUsageHeadStart = billingMarkup.indexOf('<div class="dul_providerUsageHead">');
 const providerUsageHeadEnd = billingMarkup.indexOf("</div>", providerUsageHeadStart);
 const providerUsageHeadMarkup = billingMarkup.slice(providerUsageHeadStart, providerUsageHeadEnd);
-if (!providerUsageHeadMarkup.includes("7.25")) throw new Error("provider summary must show its total cost");
+if (!providerUsageHeadMarkup.includes("$7.25")) throw new Error("provider summary must show its total cost");
 const providerUsageHeadRule = /\.dul_providerUsageHead\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
 const modelRowRule = /\.dul_modelRow\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
 const providerColumns = /grid-template-columns:([^;]+)/.exec(providerUsageHeadRule)?.[1] ?? "";
@@ -208,7 +277,7 @@ const modelValueRule = /\.dul_modelValue\{([^}]*)\}/.exec(injectedStyleText)?.[1
 if (providerColumns === "" || providerColumns !== modelColumns) throw new Error("provider and model rows must share the same three-column layout");
 if (!providerTotalRule.includes("text-align:right") || !modelValueRule.includes("text-align:right")) throw new Error("usage values must align to the right edge of their columns");
 if (injectedStyleText.includes(".dul_modelValue:last-child{grid-column:2}")) throw new Error("responsive layout must keep model cost in the third column");
-if (!billingMarkup.includes("Costs are estimates")) throw new Error("billing view must disclose estimated costs");
+if (!billingMarkup.includes("Costs are local estimates based on public list prices")) throw new Error("billing view must disclose estimated costs");
 if (!billingMarkup.includes("dul_heatmap") || !billingMarkup.includes("Mon") || !billingMarkup.includes("2026-08-21")) throw new Error("billing view must render a compact usage heatmap");
 if (!source.includes("grid-template-columns:repeat(27,minmax(0,1fr))")) throw new Error("heatmap weeks must fill the available row width");
 const viewportRule = /\.dul_heatmapViewport\{([^}]*)\}/.exec(injectedStyleText)?.[1] ?? "";
@@ -221,7 +290,7 @@ if (selectedRing === 0 || viewportPadding < selectedRing || viewportMargin < sel
 }
 
 const emptyBreakdownMarkup = renderToStaticMarkup(react.createElement(exports_.BillingView, {
-  billing: { total: { tokens: 0, cost: 0 }, providers: [], days: [] },
+  billing: { total: { tokens: 0, costs: [], unpricedTokens: 0 }, providers: [], days: [] },
   t
 }));
 if (!emptyBreakdownMarkup.includes("By provider and model") || !emptyBreakdownMarkup.includes("No provider or model usage yet")) {
