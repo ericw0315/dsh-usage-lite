@@ -39,6 +39,9 @@ async function testExplicitProviderAggregation() {
 
   assert.deepEqual(billing.providers.map((provider) => provider.id), ["deepseek-official"]);
   assert.deepEqual(billing.providers[0].models.map((model) => model.id), ["deepseek-v4-pro"]);
+  assert.equal(billing.total.cost, 0);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 0.000522 }]);
+  assert.equal(billing.total.unpricedTokens, 0);
 }
 
 async function freshModule(label) {
@@ -125,6 +128,7 @@ async function testConfiguredProviderAccounts() {
   assert.equal(body.providers[0].balance.remaining, 12.5);
   assert.equal(Number.isFinite(body.providers[0].fetchedAt), true);
   assert.equal(body.providers[1].supported, false);
+  assert.equal(body.providers[1].configured, true);
   assert.equal(body.providers[1].balance, null);
   assert.equal(balanceRequests, 1, "unsupported providers must not trigger balance requests");
 }
@@ -178,16 +182,41 @@ async function testDetailAggregation() {
     list: () => [{
       id: "live-a",
       events: [
-        usageEvent({ seq: 1, time: at, model: "deepseek/deepseek-chat", inputTokens: 1000, outputTokens: 500 }),
-        usageEvent({ seq: 2, time: at + 1000, model: "deepseek/deepseek-reasoner", inputTokens: 2000, outputTokens: 1000, cacheReadTokens: 500 }),
-        usageEvent({ seq: 3, time: at + 2000, model: "openai/gpt-4o-mini", inputTokens: 100, outputTokens: 50 })
+        usageEvent({
+          seq: 1,
+          time: at,
+          model: "deepseek/deepseek-reasoner",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheReadTokens: 1_000_000,
+          cacheWriteTokens: 1_000_000
+        }),
+        usageEvent({
+          seq: 2,
+          time: at + 1000,
+          provider: "deepseek-official",
+          model: "deepseek-v4-pro",
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheReadTokens: 1_000_000,
+          cacheWriteTokens: 1_000_000
+        }),
+        usageEvent({ seq: 3, time: at + 2000, model: "openai/private-model", inputTokens: 600_000, outputTokens: 400_000 })
       ]
     }]
   };
   const persistence = {
     listSnapshots: async () => [{ header: { id: "persisted-a" } }],
     readFrom: async () => ({
-      events: [usageEvent({ seq: 1, time: at - 86400000, model: "deepseek-chat", inputTokens: 300, outputTokens: 200 })]
+      events: [usageEvent({
+        seq: 1,
+        time: at - 86400000,
+        model: "deepseek-chat",
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000
+      })]
     }),
     list: async () => []
   };
@@ -212,18 +241,41 @@ async function testDetailAggregation() {
   const body = JSON.parse(detail.body);
   assert.equal(detail.status, 200);
   assert.equal(body.providers.length, 1);
-  assert.equal(body.billing.total.tokens, 5650);
+  assert.equal(body.billing.total.tokens, 13_000_000);
   assert.equal(body.billing.days.length, 2);
   assert.equal(body.billing.days[0].providers[0].id, "deepseek");
-  assert.deepEqual(body.billing.providers.map((provider) => provider.id), ["deepseek", "openai"]);
+  assert.deepEqual(body.billing.total.costs, [
+    { currency: "CNY", amount: 37.5 },
+    { currency: "USD", amount: 1.743625 }
+  ]);
+  assert.equal(body.billing.total.cost, 37.5);
+  assert.equal(body.billing.total.unpricedTokens, 1_000_000);
+  assert.deepEqual(body.billing.providers.map((provider) => provider.id), ["deepseek", "deepseek-official", "openai"]);
   assert.deepEqual(body.billing.providers[0].models.map((model) => [model.id, model.tokens]), [
-    ["deepseek-chat", 2000],
-    ["deepseek-reasoner", 3500]
+    ["deepseek-chat", 4_000_000],
+    ["deepseek-reasoner", 4_000_000]
   ]);
+  assert.deepEqual(body.billing.providers[0].costs, [{ currency: "CNY", amount: 37.5 }]);
+  assert.equal(body.billing.providers[0].cost, 37.5);
+  assert.equal(body.billing.providers[0].unpricedTokens, 0);
   assert.deepEqual(body.billing.providers[1].models.map((model) => [model.id, model.tokens]), [
-    ["gpt-4o-mini", 150]
+    ["deepseek-v4-pro", 4_000_000]
   ]);
-  assert.ok(body.billing.total.cost > 0);
+  assert.deepEqual(body.billing.providers[1].costs, [{ currency: "USD", amount: 1.743625 }]);
+  assert.equal(body.billing.providers[1].cost, 0);
+  assert.equal(body.billing.providers[1].unpricedTokens, 0);
+  assert.deepEqual(body.billing.providers[2].models.map((model) => [model.id, model.tokens]), [
+    ["private-model", 1_000_000]
+  ]);
+  assert.deepEqual(body.billing.providers[2].costs, []);
+  assert.equal(body.billing.providers[2].cost, 0);
+  assert.equal(body.billing.providers[2].unpricedTokens, 1_000_000);
+  assert.deepEqual(body.billing.days[1].costs, [
+    { currency: "CNY", amount: 25 },
+    { currency: "USD", amount: 1.743625 }
+  ]);
+  assert.equal(body.billing.days[1].cost, 25);
+  assert.equal(body.billing.days[1].unpricedTokens, 1_000_000);
   assert.equal(body.billing.days[0].date, "2026-08-19");
   assert.equal(body.billing.days[1].date, "2026-08-20");
 }
