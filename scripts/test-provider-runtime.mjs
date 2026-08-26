@@ -75,6 +75,8 @@ await assert.rejects(() => loadProviderAdapters(pathToFileURL(`${brokenDir}/`)),
   assert.match(String(error.message), /broken\.js/);
   assert.match(String(error.message), /import-failed/i);
   assert.equal(String(error.message).includes("secret module body"), false);
+  assert.equal("cause" in error, false);
+  assert.equal(JSON.stringify(error).includes("secret module body"), false);
   return true;
 });
 
