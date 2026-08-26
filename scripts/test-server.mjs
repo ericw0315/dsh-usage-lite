@@ -252,8 +252,8 @@ async function testDetailDegradesGracefullyWhenBalanceFails() {
   assert.equal(body.providers.length, 1);
   assert.equal(body.providers[0].id, "deepseek-official");
   assert.equal(body.provider.balance, null);
-  assert.equal(Number.isFinite(body.provider.fetchedAt), true);
-  assert.match(body.provider.error, /network-down/);
+  assert.equal("fetchedAt" in body.provider, false);
+  assert.equal(body.provider.error, "upstream-error");
 }
 
 const root = await mkdtemp(join(tmpdir(), "dsh-usage-lite-"));
