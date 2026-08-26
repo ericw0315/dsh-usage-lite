@@ -36,6 +36,18 @@ const failed = await fetchProviderBalance({
 assert.equal(failed.error, "upstream-error");
 assert.equal(JSON.stringify(failed).includes("secret upstream body"), false);
 
+const notConfigured = await fetchProviderBalance({
+  ...base,
+  capabilities: { balance: true, pricing: true },
+  fetchBalance: async () => {
+    const error = new Error("missing credential");
+    error.code = "not-configured";
+    throw error;
+  }
+}, { id: "sample" }, { now: () => 456 });
+assert.equal(notConfigured.error, "not-configured");
+assert.equal(notConfigured.configured, false);
+
 const sortedDir = await mkdtemp(join(tmpdir(), "provider-runtime-"));
 await writeFile(join(sortedDir, "zeta.js"), "export default { id: 'zeta', capabilities: { balance: false, pricing: false }, matches: () => false, normalizeConfig: (config) => config };\n");
 await writeFile(join(sortedDir, "alpha.js"), "export default { id: 'alpha', capabilities: { balance: false, pricing: false }, matches: () => false, normalizeConfig: (config) => config };\n");
@@ -46,5 +58,24 @@ const duplicateDir = await mkdtemp(join(tmpdir(), "provider-runtime-dup-"));
 await writeFile(join(duplicateDir, "first.js"), "export default { id: 'dup', capabilities: { balance: false, pricing: false }, matches: () => false, normalizeConfig: (config) => config };\n");
 await writeFile(join(duplicateDir, "second.js"), "export default { id: 'dup', capabilities: { balance: false, pricing: false }, matches: () => false, normalizeConfig: (config) => config };\n");
 await assert.rejects(() => loadProviderAdapters(pathToFileURL(`${duplicateDir}/`)), /first\.js.*second\.js|second\.js.*first\.js/);
+
+const namedExportDir = await mkdtemp(join(tmpdir(), "provider-runtime-named-"));
+await writeFile(join(namedExportDir, "named.js"), "export const id = 'named'; export const capabilities = { balance: false, pricing: false }; export const matches = () => false; export const normalizeConfig = (config) => config;\n");
+await assert.rejects(() => loadProviderAdapters(pathToFileURL(`${namedExportDir}/`)), (error) => {
+  assert.equal(error.code, "invalid-adapter-export");
+  assert.match(String(error.message), /named\.js/);
+  assert.match(String(error.message), /default export/i);
+  return true;
+});
+
+const brokenDir = await mkdtemp(join(tmpdir(), "provider-runtime-broken-"));
+await writeFile(join(brokenDir, "broken.js"), "throw new Error('secret module body');\nexport default { id: 'broken', capabilities: { balance: false, pricing: false }, matches: () => false, normalizeConfig: (config) => config };\n");
+await assert.rejects(() => loadProviderAdapters(pathToFileURL(`${brokenDir}/`)), (error) => {
+  assert.equal(error.code, "adapter-import-failed");
+  assert.match(String(error.message), /broken\.js/);
+  assert.match(String(error.message), /import-failed/i);
+  assert.equal(String(error.message).includes("secret module body"), false);
+  return true;
+});
 
 console.log("provider runtime ok");
