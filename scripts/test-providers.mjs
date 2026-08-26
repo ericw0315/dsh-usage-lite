@@ -717,6 +717,21 @@ for (const [inputTokens, inputRate, outputRate] of [
   }));
 }
 
+for (const model of [
+  "qwen3.8-max",
+  "qwen3.7-plus",
+  "qwen3.5-plus",
+  "qwen-plus",
+  "qwen3.7-flash",
+  "qwen3.5-flash",
+  "qwen-flash",
+  "qwen-turbo",
+  "qwen3-coder-plus",
+  "qwen3-coder-flash"
+]) {
+  assertUnknown(qwen, model, textUsage({ inputTokens: 1_000_001, outputTokens: 1 }));
+}
+
 assert.deepEqual(qwen.resolvePrice({
   model: "qwen-turbo",
   usage: textUsage({ inputTokens: 1_000_000, outputTokens: 1_000_000 }),

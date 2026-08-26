@@ -117,15 +117,16 @@ Token 数据来自 DSH 当前会话和本地持久化会话事件，不来自供
 估算规则：
 
 - 所有供应商都只做本地聚合和本地估算，不会向账单系统补拉历史费用。
-- 价格来自公开牌价快照，验证日期为 `2026-08-26`。
+- 除下述两个 DeepSeek 向后兼容估算外，价格来自公开牌价快照，验证日期为 `2026-08-26`。
+- `deepseek-chat` 与 `deepseek-reasoner` 沿用项目原有估算价，并标记为 `legacy-project-price`，不是当前 DeepSeek 公开牌价：前者每百万 Token 的输入/输出/缓存读取/缓存写入分别为 CNY `2/8/0.5/2`，后者为 CNY `4/16/1/4`。
 - 原始币种保持不变，CNY 和 USD 会分别展示，不做自动换汇或统一折算。
 - 未知模型绝不会回退到别的模型价格；当没有明确牌价时直接返回 `status: "unknown"`，并把相关 Token 记入 `unpricedTokens`。
-- `status: "partial"` 与 `unpricedTokens` 只用于“有一部分 Token 类别当前无法按公开牌价定价”的情况，例如缓存写入、未知模式差异或缺少必要分档条件时，这部分 Token 会被排除在估算金额外。
+- `status: "partial"` 有两种需要区分的语义。Qwen Plus/Turbo 等缺少服务模式细节时属于“基于假设的部分估算”：输入和输出 Token 仍按标准模式牌价计入金额，`unpricedTokens` 可以为 `0`。缓存写入等 Token 类别没有可用牌价时属于“排除部分 Token 的估算”：金额不包含这些 Token，并把它们计入 `unpricedTokens`。
 - 某些适配器即使仍存在账单上下文备注，也会在公开牌价足以覆盖当前全部 Token 时返回 `status: "priced"`、`unpricedTokens: 0`，并把 `pricingBasis` 标记为 `current-public-price-partial-context`。这表示金额已按公开费率计入，但仍带有上下文 caveat，而不是有 Token 被排除。
 - 首个公开版本只覆盖文本生成 Token 费用，不包含图像、音频、视频、Embedding、重排、联网工具、批处理折扣、税费或其他账单侧附加项。
-- 价格是人工维护的公开牌价快照，实际结算、优惠、赠送、离峰活动和发票口径始终以供应商账单为准。
+- 公开牌价快照与兼容估算都由项目人工维护；实际结算、优惠、赠送、离峰活动和发票口径始终以供应商账单为准。
 
-已内置的公开牌价来源：
+已内置的公开牌价来源（不包含上述两个 `legacy-project-price` 兼容估算）：
 
 - DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>（`2026-08-26`）
 - OpenAI: <https://developers.openai.com/api/docs/pricing>（`2026-08-26`）
