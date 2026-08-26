@@ -17,6 +17,9 @@ assert.ok(manifest.files?.includes("LICENSE"));
 await access(join(root, "LICENSE"));
 assert.ok(manifest.files?.includes("docs/images/usage-lite-preview.jpg"));
 await access(join(root, "docs", "images", "usage-lite-preview.jpg"));
+for (const provider of ["deepseek", "openai", "anthropic", "gemini", "qwen", "zhipu", "minimax"]) {
+  await access(join(root, "lib", "providers", `${provider}.js`));
+}
 assert.equal(manifest.publishConfig?.access, "public");
 assert.equal(manifest.scripts?.prepublishOnly, "npm run check && npm test");
 
@@ -24,5 +27,10 @@ const patchPath = join(root, normalize(patchDeclaration));
 await access(patchPath);
 const patch = await readFile(patchPath, "utf8");
 assert.equal([...patch.matchAll(/^\s+name:\s+"dsh-usage-lite"\s*$/gm)].length, 1);
+const readme = await readFile(join(root, "README.md"), "utf8");
+assert.ok(readme.includes("lib/providers/"));
+assert.ok(readme.includes("unpricedTokens"));
+assert.ok(readme.includes("MiniMax"));
+assert.ok(readme.includes("智谱"));
 
 console.log("bundle ok");

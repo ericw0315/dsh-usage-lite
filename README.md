@@ -84,27 +84,73 @@ DEEPSEEK_API_KEY: sk-your-key-here
 
 ## 供应商支持
 
-| 能力 | DeepSeek | 其他 DSH 供应商 |
-| --- | --- | --- |
-| 自动发现与列表展示 | 支持 | 支持 |
-| Token 用量聚合 | 支持 | 支持，取决于会话事件是否包含 usage 信息 |
-| 余额查询 | 支持 | 暂不支持 |
-| 折叠态默认账户 | 支持 | 余额查询适配后可用 |
+当前版本按“一个供应商一个适配器文件”组织，所有适配器都位于 `lib/providers/`：
 
-余额查询调用 provider 配置的 `baseURL` 下的 `/user/balance`。新增供应商余额适配器是后续扩展方向，欢迎贡献。
+- `lib/providers/deepseek.js`
+- `lib/providers/openai.js`
+- `lib/providers/anthropic.js`
+- `lib/providers/gemini.js`
+- `lib/providers/qwen.js`
+- `lib/providers/zhipu.js`
+- `lib/providers/minimax.js`
+
+能力矩阵如下：
+
+| 供应商 | 自动发现与列表展示 | 本地 Token 聚合 | 公共牌价估算 | 余额请求 | 折叠态默认账户 | 估算币种 |
+| --- | --- | --- | --- | --- | --- | --- |
+| DeepSeek | 支持 | 支持 | 支持 | 支持 | 支持 | CNY / USD |
+| OpenAI | 支持 | 支持 | 支持 | 不支持 | 不支持 | USD |
+| Anthropic | 支持 | 支持 | 支持 | 不支持 | 不支持 | USD |
+| Gemini | 支持 | 支持 | 支持 | 不支持 | 不支持 | USD |
+| Qwen | 支持 | 支持 | 支持 | 不支持 | 不支持 | CNY |
+| 智谱 Zhipu | 支持 | 支持 | 支持 | 不支持 | 不支持 | CNY |
+| MiniMax | 支持 | 支持 | 支持 | 不支持 | 不支持 | CNY |
+
+- 当前只有 DeepSeek 会发起真实余额请求，调用 provider `baseURL` 下的 `/user/balance`。
+- 其余六个供应商不会请求余额接口，只会展示账户、聚合本地 Token，并按公开牌价做估算。
+- 折叠态默认账户当前只允许选择 DeepSeek，因为它是唯一能返回实时余额的适配器。
 
 ## 数据来源与估算
 
 Token 数据来自 DSH 当前会话和本地持久化会话事件，不来自供应商账单 API。插件读取事件中的 `data.usage` 和模型来源信息，并按 UTC 日期聚合。
 
-开销由内置价格表估算，单位为人民币 / 100 万 Token：
+估算规则：
 
-| 模型 | 输入 | 输出 | 缓存读取 | 缓存写入 |
-| --- | ---: | ---: | ---: | ---: |
-| `deepseek-chat` | ¥2 | ¥8 | ¥0.5 | ¥2 |
-| `deepseek-reasoner` | ¥4 | ¥16 | ¥1 | ¥4 |
+- 所有供应商都只做本地聚合和本地估算，不会向账单系统补拉历史费用。
+- 价格来自公开牌价快照，验证日期为 `2026-08-26`。
+- 原始币种保持不变，CNY 和 USD 会分别展示，不做自动换汇或统一折算。
+- 未知模型绝不会回退到别的模型价格；当没有明确牌价时直接返回 `status: "unknown"`，并把相关 Token 记入 `unpricedTokens`。
+- 如果供应商公开价格缺少部分上下文（例如缓存写入、分档条件或模式差异），会返回 `status: "partial"`，只估算已知部分，并把未定价 Token 记入 `unpricedTokens`。
+- 首个公开版本只覆盖文本生成 Token 费用，不包含图像、音频、视频、Embedding、重排、联网工具、批处理折扣、税费或其他账单侧附加项。
+- 价格是人工维护的公开牌价快照，实际结算、优惠、赠送、离峰活动和发票口径始终以供应商账单为准。
 
-> **重要：开销仅为估算值。** 供应商定价、缓存计费、折扣、币种和账单规则可能变化；未知模型当前按 `deepseek-chat` 价格估算。请始终以供应商实际账单为准。
+已内置的公开牌价来源：
+
+- DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>（`2026-08-26`）
+- OpenAI: <https://developers.openai.com/api/docs/pricing>（`2026-08-26`）
+- Anthropic: <https://platform.claude.com/docs/en/about-claude/pricing>（`2026-08-26`）
+- Gemini: <https://ai.google.dev/gemini-api/docs/pricing>（`2026-08-26`）
+- Qwen: <https://help.aliyun.com/zh/model-studio/model-pricing>（`2026-08-26`）
+- 智谱 Zhipu: <https://bigmodel.cn/pricing>（`2026-08-26`）
+- MiniMax: <https://platform.minimaxi.com/docs/guides/pricing-paygo>（`2026-08-26`）
+
+## 适配器约定
+
+新增供应商时，请为每个供应商单独新增一个 `lib/providers/<provider>.js` 文件，并默认导出同一份六成员契约：
+
+1. `id`
+2. `capabilities`
+3. `matches(config)`
+4. `normalizeConfig(config)`
+5. `fetchBalance(context)`
+6. `resolvePrice(context)`
+
+说明：
+
+- `capabilities.balance` 必须与 `fetchBalance` 是否存在保持一致。
+- `capabilities.pricing` 必须与 `resolvePrice` 是否存在保持一致。
+- 当前七个内置适配器中，只有 DeepSeek 同时实现余额与定价；其余六个只实现定价。
+- `scripts/test-bundle.mjs` 会校验 `lib/providers/` 下七个适配器都被打包，并要求本文档覆盖 `unpricedTokens` 与供应商能力边界。
 
 ## 隐私与安全
 
