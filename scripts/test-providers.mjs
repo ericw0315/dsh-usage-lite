@@ -258,6 +258,14 @@ assert.deepEqual(openai.resolvePrice({
   status: "unknown",
   unpricedTokens: 4_000_000
 });
+assert.deepEqual(openai.resolvePrice({
+  model: "proxy/foo/gpt-5.6-luna",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
 
 assertPricingOnly(anthropic);
 assert.equal(anthropic.matches({ id: "anthropic" }), true);
@@ -342,6 +350,14 @@ assert.deepEqual(anthropic.resolvePrice({
 });
 assert.deepEqual(anthropic.resolvePrice({
   model: "claude-private",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
+assert.deepEqual(anthropic.resolvePrice({
+  model: "custom/claude-sonnet-5",
   usage: millionUsage(),
   occurredAt: weekdayAt(10)
 }), {
@@ -456,6 +472,14 @@ assert.deepEqual(gemini.resolvePrice({
 });
 assert.deepEqual(gemini.resolvePrice({
   model: "private-model",
+  usage: millionUsage(),
+  occurredAt: weekdayAt(10)
+}), {
+  status: "unknown",
+  unpricedTokens: 4_000_000
+});
+assert.deepEqual(gemini.resolvePrice({
+  model: "proxy/gemini-2.5-flash",
   usage: millionUsage(),
   occurredAt: weekdayAt(10)
 }), {

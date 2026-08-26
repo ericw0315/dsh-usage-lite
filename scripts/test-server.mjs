@@ -44,6 +44,60 @@ async function testExplicitProviderAggregation() {
   assert.equal(billing.total.unpricedTokens, 0);
 }
 
+async function testConfiguredOfficialProviderPricing() {
+  const plugin = await freshModule("configured-official-pricing");
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const settings = {
+    get: (name) => {
+      if (name === "llm-deepseek") return { apiKeyEnv: "DEEPSEEK_API_KEY", baseURL: "https://api.deepseek.com" };
+      if (name === "llm-pi-ai") return {
+        providers: {
+          "openai-main": { displayName: "OpenAI Main", apiKeyEnv: "OPENAI_API_KEY", baseURL: "https://api.openai.com/v1" },
+          "custom-gateway": { displayName: "Custom Gateway", baseURL: "https://gateway.example/v1" }
+        }
+      };
+      return void 0;
+    }
+  };
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: {
+      list: () => [{
+        id: "live-provider",
+        events: [
+          usageEvent({
+            seq: 1,
+            time: at,
+            provider: "openai-main",
+            model: "openai/gpt-5.6-luna",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000,
+            cacheReadTokens: 1_000_000,
+            cacheWriteTokens: 1_000_000
+          }),
+          usageEvent({
+            seq: 2,
+            time: at + 1000,
+            provider: "custom-gateway",
+            model: "openai/gpt-5.6-luna",
+            inputTokens: 600_000,
+            outputTokens: 400_000
+          })
+        ]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] },
+    settings
+  }));
+
+  assert.deepEqual(billing.providers.map((provider) => provider.id), ["custom-gateway", "openai-main"]);
+  assert.deepEqual(billing.providers[0].costs, []);
+  assert.equal(billing.providers[0].unpricedTokens, 1_000_000);
+  assert.deepEqual(billing.providers[1].costs, [{ currency: "USD", amount: 1.67 }]);
+  assert.equal(billing.providers[1].unpricedTokens, 0);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 1.67 }]);
+  assert.equal(billing.total.unpricedTokens, 1_000_000);
+}
+
 async function freshModule(label) {
   return import(new URL(`../lib/index.js?test=${label}-${Date.now()}-${Math.random()}`, import.meta.url));
 }
@@ -315,6 +369,7 @@ try {
   await testRoutes();
   await testConfiguredProviderAccounts();
   await testExplicitProviderAggregation();
+  await testConfiguredOfficialProviderPricing();
   await testDetailAggregation();
   await testDetailDegradesGracefullyWhenBalanceFails();
   console.log("server ok");
