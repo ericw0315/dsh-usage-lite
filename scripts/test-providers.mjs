@@ -258,6 +258,14 @@ assert.deepEqual(deepseek.resolvePrice({
   status: "unknown",
   unpricedTokens: 4_000_000
 });
+for (const model of [
+  "proxy/deepseek-v4-flash",
+  "proxy/deepseek-v4-pro",
+  "proxy/deepseek-chat",
+  "proxy/deepseek-reasoner"
+]) {
+  assertUnknown(deepseek, model);
+}
 
 assertPricingOnly(openai);
 assert.equal(openai.matches({ id: "openai" }), true);

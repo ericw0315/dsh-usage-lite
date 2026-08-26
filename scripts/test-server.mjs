@@ -135,6 +135,43 @@ async function testModelPrefixPricingFallback() {
   assert.equal(billing.providers[0].unpricedTokens, 0);
 }
 
+async function testDeepSeekNamespacedModelsStayUnpriced() {
+  const plugin = await freshModule("deepseek-namespaced-models");
+  const at = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: {
+      list: () => [{
+        id: "namespaced-models",
+        events: [
+          usageEvent({
+            seq: 1,
+            time: at,
+            provider: "deepseek-official",
+            model: "proxy/deepseek-v4-pro",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000
+          }),
+          usageEvent({
+            seq: 2,
+            time: at + 1000,
+            provider: "deepseek-official",
+            model: "proxy/deepseek-chat",
+            inputTokens: 1_000_000,
+            outputTokens: 1_000_000
+          })
+        ]
+      }]
+    },
+    persistence: { listSnapshots: async () => [] }
+  }));
+
+  assert.deepEqual(billing.providers.map((provider) => provider.id), ["deepseek-official"]);
+  assert.deepEqual(billing.providers[0].costs, []);
+  assert.equal(billing.providers[0].unpricedTokens, 4_000_000);
+  assert.deepEqual(billing.total.costs, []);
+  assert.equal(billing.total.unpricedTokens, 4_000_000);
+}
+
 async function freshModule(label) {
   return import(new URL(`../lib/index.js?test=${label}-${Date.now()}-${Math.random()}`, import.meta.url));
 }
@@ -590,6 +627,7 @@ try {
   await testExplicitProviderAggregation();
   await testConfiguredOfficialProviderPricing();
   await testModelPrefixPricingFallback();
+  await testDeepSeekNamespacedModelsStayUnpriced();
   await testDetailAggregation();
   await testDetailDegradesGracefullyWhenBalanceFails();
   await testAmbiguousConfiguredProvidersDegradeSafely();
