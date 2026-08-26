@@ -44,7 +44,7 @@ function textUsage({
 }
 
 function quoted(tokens, rate) {
-  return Number((((Math.max(0, Number(tokens) || 0)) / UNIT_TOKENS) * rate).toFixed(6));
+  return ((Math.max(0, Number(tokens) || 0)) / UNIT_TOKENS) * rate;
 }
 
 function expectedQuote({
@@ -70,12 +70,12 @@ function expectedQuote({
   return {
     status,
     currency,
-    amount: Number((
+    amount: (
       breakdown.input +
       breakdown.output +
       (breakdown.cacheRead ?? 0) +
       (breakdown.cacheWrite ?? 0)
-    ).toFixed(6)),
+    ),
     breakdown,
     unpricedTokens,
     pricingBasis,
@@ -93,6 +93,20 @@ function assertUnknown(adapter, model, usage = millionUsage()) {
 function assertPricingOnly(adapter) {
   assert.deepEqual(adapter.capabilities, { balance: false, pricing: true });
   assert.equal("fetchBalance" in adapter, false);
+}
+
+for (const { id, adapter, model, usage, expected, category } of [
+  { id: "deepseek", adapter: deepseek, model: "deepseek-v4-flash", usage: textUsage({ inputTokens: 1 }), expected: 1.4e-7, category: "input" },
+  { id: "openai", adapter: openai, model: "gpt-5.6-luna", usage: textUsage({ inputTokens: 1 }), expected: 2e-7, category: "input" },
+  { id: "anthropic", adapter: anthropic, model: "claude-haiku-3.5", usage: textUsage({ cacheReadTokens: 1 }), expected: 8e-8, category: "cacheRead" },
+  { id: "gemini", adapter: gemini, model: "gemini-2.5-flash-lite", usage: textUsage({ inputTokens: 1 }), expected: 1e-7, category: "input" },
+  { id: "qwen", adapter: qwen, model: "qwen-flash", usage: textUsage({ inputTokens: 1 }), expected: 1.5e-7, category: "input" },
+  { id: "zhipu", adapter: zhipu, model: "glm-4.7-flashx", usage: textUsage({ cacheReadTokens: 1 }), expected: 1e-7, category: "cacheRead" },
+  { id: "minimax", adapter: minimax, model: "minimax-m2.7", usage: textUsage({ cacheReadTokens: 1 }), expected: 4.2e-7, category: "cacheRead" }
+]) {
+  const quote = adapter.resolvePrice({ model, usage, occurredAt: weekdayAt(10) });
+  assert.ok(Math.abs(quote.breakdown[category] - expected) < 1e-18, `${id} must preserve sub-micro quote precision`);
+  assert.ok(Math.abs(quote.amount - expected) < 1e-18, `${id} must not round quote totals before aggregation`);
 }
 
 assert.equal(deepseek.matches({ id: "deepseek-official" }), true);
@@ -178,7 +192,7 @@ const flashPeak = deepseek.resolvePrice({
 assert.deepEqual(flashPeak, {
   status: "priced",
   currency: "USD",
-  amount: 1.1256,
+  amount: 1.1256000000000002,
   breakdown: {
     input: 0.28,
     output: 0.56,
@@ -198,7 +212,7 @@ const flashOffPeak = deepseek.resolvePrice({
   usage: millionUsage(),
   occurredAt: weekdayAt(4)
 });
-assert.equal(flashOffPeak.amount, 0.5628);
+assert.equal(flashOffPeak.amount, 0.5628000000000001);
 assert.deepEqual(flashOffPeak.breakdown, {
   input: 0.14,
   output: 0.28,
@@ -486,9 +500,9 @@ assert.deepEqual(gemini.resolvePrice({
 }), {
   status: "priced",
   currency: "USD",
-  amount: 15.750003,
+  amount: 15.7500025,
   breakdown: {
-    input: 0.500003,
+    input: 0.5000025,
     output: 15,
     cacheRead: 0.25,
     cacheWrite: 0
@@ -507,7 +521,7 @@ assert.deepEqual(gemini.resolvePrice({
 }), {
   status: "partial",
   currency: "USD",
-  amount: 2.83,
+  amount: 2.8299999999999996,
   breakdown: {
     input: 0.3,
     output: 2.5,

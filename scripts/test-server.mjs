@@ -51,6 +51,32 @@ async function testExplicitProviderAggregation() {
   assert.equal(billing.total.unpricedTokens, 0);
 }
 
+async function testRawCostAccumulationAcrossDays() {
+  const plugin = await freshModule("raw-cost-accumulation");
+  const firstDay = Date.UTC(2026, 7, 19, 10, 0, 0);
+  const secondDay = Date.UTC(2026, 7, 20, 10, 0, 0);
+  const events = Array.from({ length: 16 }, (_, index) => usageEvent({
+    seq: index + 1,
+    time: index < 8 ? firstDay + index : secondDay + index,
+    provider: "openai",
+    model: "openai/gpt-5.6-luna",
+    inputTokens: 1,
+    outputTokens: 0
+  }));
+  const billing = await plugin.collectBilling(makeContext({
+    sessions: { list: () => [{ id: "small-events", events }] },
+    persistence: { listSnapshots: async () => [] }
+  }));
+
+  assert.deepEqual(billing.days.map((day) => day.costs), [
+    [{ currency: "USD", amount: 0.000002 }],
+    [{ currency: "USD", amount: 0.000002 }]
+  ]);
+  assert.deepEqual(billing.providers[0].costs, [{ currency: "USD", amount: 0.000003 }]);
+  assert.deepEqual(billing.providers[0].models[0].costs, [{ currency: "USD", amount: 0.000003 }]);
+  assert.deepEqual(billing.total.costs, [{ currency: "USD", amount: 0.000003 }]);
+}
+
 async function testConfiguredOfficialProviderPricing() {
   const plugin = await freshModule("configured-official-pricing");
   const at = Date.UTC(2026, 7, 20, 10, 0, 0);
@@ -625,6 +651,7 @@ try {
   await testRoutes();
   await testConfiguredProviderAccounts();
   await testExplicitProviderAggregation();
+  await testRawCostAccumulationAcrossDays();
   await testConfiguredOfficialProviderPricing();
   await testModelPrefixPricingFallback();
   await testDeepSeekNamespacedModelsStayUnpriced();
