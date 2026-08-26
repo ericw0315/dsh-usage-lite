@@ -75,7 +75,7 @@ assert.equal(JSON.stringify(failed).includes("secret upstream body"), false);
 
 - [ ] **Step 2: Run the runtime test and verify failure**
 
-Run: `node scripts/test-provider-runtime.mjs`  
+Run: `node scripts/test-provider-runtime.mjs`
 Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `lib/provider-runtime.js`.
 
 - [ ] **Step 3: Implement the runtime**
@@ -104,7 +104,7 @@ export function resolveProviderPrice(adapter, context) {
 
 Modify `package.json` so `check` includes `node --check lib/provider-runtime.js && node --check scripts/test-provider-runtime.mjs`, and `test` runs `node scripts/test-provider-runtime.mjs` before server tests.
 
-Run: `npm run check && node scripts/test-provider-runtime.mjs`  
+Run: `npm run check && node scripts/test-provider-runtime.mjs`
 Expected: syntax checks pass and output ends with `provider runtime ok`.
 
 - [ ] **Step 5: Commit the runtime**
@@ -162,7 +162,7 @@ Include current public DeepSeek V4 model cases and regression cases for the exis
 
 - [ ] **Step 2: Run provider tests and verify failure**
 
-Run: `node scripts/test-providers.mjs`  
+Run: `node scripts/test-providers.mjs`
 Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `lib/providers/deepseek.js`.
 
 - [ ] **Step 3: Implement the DeepSeek adapter**
@@ -206,7 +206,7 @@ Keep the route schema fields used by the current client: `id`, `displayName`, `s
 
 - [ ] **Step 5: Run DeepSeek and route tests**
 
-Run: `node scripts/test-providers.mjs && node scripts/test-server.mjs`  
+Run: `node scripts/test-providers.mjs && node scripts/test-server.mjs`
 Expected: both pass; existing DeepSeek balance request count remains one and unsupported providers make no requests.
 
 - [ ] **Step 6: Register tests and commit**
@@ -254,7 +254,7 @@ Test official domains, explicit aliases, custom-gateway non-matches, input tiers
 
 - [ ] **Step 2: Run tests and verify failure**
 
-Run: `node scripts/test-providers.mjs`  
+Run: `node scripts/test-providers.mjs`
 Expected: FAIL on the first missing USD adapter module.
 
 - [ ] **Step 3: Implement `openai.js`**
@@ -273,7 +273,7 @@ Cover public text-token prices for the commonly configured Gemini 2.5 Pro, Flash
 
 Add all three files to `package.json` syntax checks.
 
-Run: `npm run check && node scripts/test-providers.mjs`  
+Run: `npm run check && node scripts/test-providers.mjs`
 Expected: PASS and output ends with `providers ok`.
 
 ```bash
@@ -326,7 +326,7 @@ Use tests immediately below and above every documented tier boundary to remove `
 
 - [ ] **Step 2: Run tests and verify failure**
 
-Run: `node scripts/test-providers.mjs`  
+Run: `node scripts/test-providers.mjs`
 Expected: FAIL on the first missing CNY adapter module.
 
 - [ ] **Step 3: Implement `qwen.js`**
@@ -345,7 +345,7 @@ Cover MiniMax-M3 at `≤512K` and `>512K`, MiniMax-M2.7, and MiniMax-M2.7-highsp
 
 Add the three files to `package.json` syntax checks.
 
-Run: `npm run check && node scripts/test-providers.mjs`  
+Run: `npm run check && node scripts/test-providers.mjs`
 Expected: PASS.
 
 ```bash
@@ -384,7 +384,7 @@ Add an explicit test showing `openai/private-model` is not priced using DeepSeek
 
 - [ ] **Step 2: Run the server test and verify failure**
 
-Run: `node scripts/test-server.mjs`  
+Run: `node scripts/test-server.mjs`
 Expected: FAIL because current results expose numeric `cost` and have no `costs` or `unpricedTokens`.
 
 - [ ] **Step 3: Implement reusable money aggregation**
@@ -414,7 +414,7 @@ Create a minimal pricing configuration from event source provider ID and model p
 
 - [ ] **Step 5: Run server and full tests**
 
-Run: `node scripts/test-server.mjs && npm test`  
+Run: `node scripts/test-server.mjs && npm test`
 Expected: server aggregation passes; the client smoke test now fails on the old numeric cost schema, which Task 6 addresses. All earlier runtime/provider tests remain green.
 
 - [ ] **Step 6: Commit aggregation**
@@ -455,7 +455,7 @@ Change billing fixtures to `costs` arrays and `unpricedTokens`. Assert that mark
 
 - [ ] **Step 2: Run client smoke test and verify failure**
 
-Run: `node scripts/smoke-client.mjs`  
+Run: `node scripts/smoke-client.mjs`
 Expected: FAIL with `missing multi-currency formatter`.
 
 - [ ] **Step 3: Implement shared cost formatting**
@@ -479,7 +479,7 @@ Add `billing.unpricedTokens` and `billing.unpricedNotice` in Chinese and English
 
 - [ ] **Step 5: Run client and full tests**
 
-Run: `node scripts/smoke-client.mjs && npm test && npm run check`  
+Run: `node scripts/smoke-client.mjs && npm test && npm run check`
 Expected: all pass.
 
 - [ ] **Step 6: Commit client changes**
@@ -519,7 +519,7 @@ assert.ok(readme.includes("智谱"));
 
 - [ ] **Step 2: Run bundle test and verify failure**
 
-Run: `node scripts/test-bundle.mjs`  
+Run: `node scripts/test-bundle.mjs`
 Expected: FAIL because the README does not yet document the adapter path and unpriced token behavior.
 
 - [ ] **Step 3: Update README**
@@ -540,10 +540,10 @@ Ensure `check` syntax-checks `lib/provider-runtime.js`, all seven provider files
 
 - [ ] **Step 5: Run final verification**
 
-Run: `npm run check && npm test && npm pack --dry-run`  
+Run: `npm run check && npm test && npm pack --dry-run`
 Expected: all syntax/tests pass; dry-run package contents include `lib/provider-runtime.js` and all seven `lib/providers/*.js` files, and contain no credentials or local session data.
 
-Run: `git diff --check && git status --short`  
+Run: `git diff --check && git status --short`
 Expected: no whitespace errors; only planned README/test/package changes are present before commit.
 
 - [ ] **Step 6: Commit documentation and verification**
@@ -555,5 +555,5 @@ git commit -m "docs: document multi-provider usage estimates"
 
 - [ ] **Step 7: Record final evidence**
 
-Run: `git status --short --branch && git log --oneline --decorate -8`  
+Run: `git status --short --branch && git log --oneline --decorate -8`
 Expected: clean `multi-provider-support` branch with the design, plan, and implementation commits; report the exact `npm run check`, `npm test`, and `npm pack --dry-run` outcomes.

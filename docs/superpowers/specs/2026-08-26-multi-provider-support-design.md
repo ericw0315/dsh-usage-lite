@@ -1,7 +1,7 @@
 # Multi-provider support design
 
-Date: 2026-08-26  
-Status: Approved in conversation  
+Date: 2026-08-26
+Status: Approved in conversation
 Branch: `multi-provider-support`
 
 ## Summary
