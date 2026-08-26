@@ -43,6 +43,7 @@ if (typeof exports_.BillingView !== "function") throw new Error("missing billing
 if (typeof exports_.buildUsageHeatmap !== "function") throw new Error("missing usage heatmap helper");
 if (typeof exports_.selectSummaryProvider !== "function") throw new Error("missing summary provider selection helper");
 if (typeof exports_.fmtCosts !== "function") throw new Error("missing multi-currency formatter");
+if (typeof exports_.refreshFailedOf !== "function") throw new Error("missing refresh failure classifier");
 const formatted = exports_.fmtCosts([
   { currency: "CNY", amount: 0.18 },
   { currency: "USD", amount: 0.04 }
@@ -109,6 +110,37 @@ const initialFailedRefresh = exports_.mergeRefreshResults({
   previousDetail: null
 });
 if (initialFailedRefresh.detail !== null) throw new Error("an initial request failure must not fabricate a configured provider");
+
+const expectedAccountStates = {
+  summaryResult: {
+    status: "fulfilled",
+    value: { provider: { id: "deepseek-official", configured: false, balance: null, error: "not-configured" } }
+  },
+  detailResult: {
+    status: "fulfilled",
+    value: {
+      providers: [
+        { id: "deepseek-official", configured: false, balance: null, error: "not-configured" },
+        { id: "openai-main", supported: false, balance: null, error: "unsupported" }
+      ]
+    }
+  }
+};
+if (exports_.refreshFailedOf(expectedAccountStates)) {
+  throw new Error("unsupported and not-configured accounts must not make a successful panel refresh look failed");
+}
+if (!exports_.refreshFailedOf({
+  summaryResult: { status: "fulfilled", value: { provider: { id: "deepseek-official", error: "upstream-error" } } },
+  detailResult: { status: "fulfilled", value: { providers: [] } }
+})) {
+  throw new Error("unexpected account errors must still make the panel refresh look failed");
+}
+if (!exports_.refreshFailedOf({
+  summaryResult: { status: "rejected", reason: new Error("offline") },
+  detailResult: { status: "fulfilled", value: { providers: [] } }
+})) {
+  throw new Error("request rejection must still make the panel refresh look failed");
+}
 
 const labels = {
   "provider.balance": "Current balance",
